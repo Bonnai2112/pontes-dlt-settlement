@@ -16,7 +16,8 @@ import jakarta.persistence.Version;
 import com.dl3s.pontes.interop.CashLegOption;
 
 /**
- * Hash Link DvP instance on the Pontes side (cash leg only). Lifecycle:
+ * Hash Link DvP instance on the Pontes side: the cash leg, settled by Pontes, and the reference of the asset leg
+ * (platform, ISIN, quantity), settled by the parties on the market DLT. Lifecycle:
  * INITIALISED → (PAYMENT_PENDING →) SETTLED, or INITIALISED → EXPIRED after the timeout without payment.
  * A rejected payment (insufficient funds, T2 rejection) leaves the instance INITIALISED: the buyer may
  * retry until the timeout. The Execution Key can only be revealed in SETTLED, the Cancellation Key only in EXPIRED:
@@ -46,6 +47,14 @@ public class DvpInstruction {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private CashLegOption cashLeg;
+
+    @Column(nullable = false)
+    private String marketDltPlatform;
+
+    @Column(nullable = false)
+    private String isin;
+
+    private long quantity;
 
     @Column(nullable = false)
     private String executionKey;
@@ -83,12 +92,16 @@ public class DvpInstruction {
     }
 
     public DvpInstruction(String tradeReference, String seller, String buyer, BigDecimal cashAmount,
-                          CashLegOption cashLeg, Instant timeout) {
+                          CashLegOption cashLeg, String marketDltPlatform, String isin, long quantity,
+                          Instant timeout) {
         if (seller.equals(buyer)) {
             throw new IllegalArgumentException("Seller and buyer must be different");
         }
         if (cashAmount.signum() <= 0) {
             throw new IllegalArgumentException("Amount must be strictly positive");
+        }
+        if (quantity <= 0) {
+            throw new IllegalArgumentException("Asset quantity must be strictly positive");
         }
         this.dvpId = "dvp-" + UUID.randomUUID();
         this.tradeReference = tradeReference;
@@ -96,6 +109,9 @@ public class DvpInstruction {
         this.buyer = buyer;
         this.cashAmount = cashAmount;
         this.cashLeg = cashLeg;
+        this.marketDltPlatform = marketDltPlatform;
+        this.isin = isin;
+        this.quantity = quantity;
         this.executionKey = HashLinkKeys.generate();
         this.cancellationKey = HashLinkKeys.generate();
         this.executionKeyHash = HashLinkKeys.hash(executionKey);
@@ -157,6 +173,9 @@ public class DvpInstruction {
     public String getBuyer() { return buyer; }
     public BigDecimal getCashAmount() { return cashAmount; }
     public CashLegOption getCashLeg() { return cashLeg; }
+    public String getMarketDltPlatform() { return marketDltPlatform; }
+    public String getIsin() { return isin; }
+    public long getQuantity() { return quantity; }
     public String getExecutionKey() { return executionKey; }
     public String getCancellationKey() { return cancellationKey; }
     public String getExecutionKeyHash() { return executionKeyHash; }

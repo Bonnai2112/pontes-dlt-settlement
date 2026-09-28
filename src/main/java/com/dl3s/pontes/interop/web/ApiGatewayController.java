@@ -45,7 +45,8 @@ class ApiGatewayController {
     @ResponseStatus(HttpStatus.CREATED)
     DvpView initialise(@Valid @RequestBody InitialisationRequest request) {
         return dvpSettlement.initialise(new DvpInitialisation(request.tradeReference(), request.seller(),
-                request.buyer(), request.cashAmount(), request.cashLeg(),
+                request.buyer(), request.cashAmount(), request.cashLeg(), request.marketDltPlatform(), request.isin(),
+                request.quantity(),
                 request.timeoutSeconds() == null ? null : Duration.ofSeconds(request.timeoutSeconds())));
     }
 
@@ -80,6 +81,7 @@ class ApiGatewayController {
 
     record InitialisationRequest(@NotBlank String tradeReference, @NotBlank String seller, @NotBlank String buyer,
                                  @NotNull @Positive BigDecimal cashAmount, @NotNull CashLegOption cashLeg,
+                                 @NotBlank String marketDltPlatform, @NotBlank String isin, @Positive long quantity,
                                  @Positive Long timeoutSeconds) {
     }
 

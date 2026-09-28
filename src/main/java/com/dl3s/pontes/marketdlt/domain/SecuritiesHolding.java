@@ -9,12 +9,15 @@ import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
 
 @Entity
-@Table(name = "market_holding", uniqueConstraints = @UniqueConstraint(columnNames = {"party", "isin"}))
+@Table(name = "market_holding", uniqueConstraints = @UniqueConstraint(columnNames = {"platform", "party", "isin"}))
 public class SecuritiesHolding {
 
     @Id
     @GeneratedValue
     private Long id;
+
+    @Column(nullable = false)
+    private String platform;
 
     @Column(nullable = false)
     private String party;
@@ -32,7 +35,8 @@ public class SecuritiesHolding {
     protected SecuritiesHolding() {
     }
 
-    public SecuritiesHolding(String party, String isin) {
+    public SecuritiesHolding(String platform, String party, String isin) {
+        this.platform = platform;
         this.party = party;
         this.isin = isin;
     }

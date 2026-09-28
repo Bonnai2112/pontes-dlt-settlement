@@ -25,6 +25,16 @@ pontes:
   dlt-technical-account: EUROSYSTEM-DLT-TA
   demo:
     enabled: true
+  # Pontes reference data (Pontes Operator): the market DLT platforms configured in Pontes
+  reference-data:
+    market-dlt-platforms: [MDLT-A, MDLT-B]
+  # The market DLT platforms themselves, run by their own operators (simulated unless besu settings are given)
+  market-dlt:
+    platforms:
+      - id: MDLT-A
+        name: Market DLT A
+      - id: MDLT-B
+        name: Market DLT B
   # Hash-Link protocol timeout thresholds (configured by the Pontes Operator)
   hash-link:
     default-timeout: PT10M

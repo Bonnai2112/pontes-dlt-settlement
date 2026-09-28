@@ -43,18 +43,23 @@ public class DvpSettlementService {
     private final TriggerBackend triggerBackend;
     private final ApplicationEventPublisher events;
     private final HashLinkProperties properties;
+    private final MarketDltReferenceDataService referenceData;
 
     DvpSettlementService(DvpInstructionRepository instructions, CashTokenLedger cashTokens,
                          TriggerBackend triggerBackend, ApplicationEventPublisher events,
-                         HashLinkProperties properties) {
+                         HashLinkProperties properties, MarketDltReferenceDataService referenceData) {
         this.instructions = instructions;
         this.cashTokens = cashTokens;
         this.triggerBackend = triggerBackend;
         this.events = events;
         this.properties = properties;
+        this.referenceData = referenceData;
     }
 
-    /** Phase 1: generates the keys and returns their hashes; idempotent on the trade reference. */
+    /**
+     * Phase 1: checks the reference data (platform configured, both parties linked to it), generates the keys and
+     * returns their hashes; idempotent on the trade reference.
+     */
     public DvpView initialise(DvpInitialisation request) {
         var existing = instructions.findByTradeReference(request.tradeReference());
         if (existing.isPresent()) {
@@ -65,7 +70,9 @@ public class DvpSettlementService {
             throw new IllegalArgumentException("Timeout out of bounds (maximum " + properties.maxTimeout() + ")");
         }
         DvpInstruction dvp = new DvpInstruction(request.tradeReference(), request.seller(), request.buyer(),
-                request.cashAmount(), request.cashLeg(), Instant.now().plus(timeout));
+                request.cashAmount(), request.cashLeg(), request.marketDltPlatform(), request.isin(),
+                request.quantity(), Instant.now().plus(timeout));
+        referenceData.requireLinked(request.marketDltPlatform(), request.seller(), request.buyer());
         return toView(instructions.save(dvp));
     }
 
@@ -190,7 +197,8 @@ public class DvpSettlementService {
 
     private static DvpView toView(DvpInstruction d) {
         return new DvpView(d.getDvpId(), d.getTradeReference(), d.getSeller(), d.getBuyer(), d.getCashAmount(),
-                d.getCashLeg(), d.getExecutionKeyHash(), d.getCancellationKeyHash(), d.getTimeout(),
-                d.getStatus().name(), d.getLastRejectionReason(), d.getInitialisedAt(), d.getSettledAt());
+                d.getCashLeg(), d.getMarketDltPlatform(), d.getIsin(), d.getQuantity(), d.getExecutionKeyHash(),
+                d.getCancellationKeyHash(), d.getTimeout(), d.getStatus().name(), d.getLastRejectionReason(),
+                d.getInitialisedAt(), d.getSettledAt());
     }
 }

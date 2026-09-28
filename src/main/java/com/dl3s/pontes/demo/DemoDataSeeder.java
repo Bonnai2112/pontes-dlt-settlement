@@ -11,6 +11,9 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import com.dl3s.pontes.interop.MarketDltReferenceData;
+import com.dl3s.pontes.marketdlt.MarketDltPlatformView;
+import com.dl3s.pontes.marketdlt.MarketDltPlatforms;
 import com.dl3s.pontes.marketdlt.SecuritiesLedger;
 import com.dl3s.pontes.rtgs.AccountView;
 import com.dl3s.pontes.rtgs.RtgsAccounts;
@@ -23,19 +26,26 @@ import com.dl3s.pontes.rtgs.RtgsAccounts;
 @ConditionalOnProperty(prefix = "pontes.demo", name = "enabled", havingValue = "true")
 class DemoDataSeeder implements ApplicationRunner {
 
+    static final String PLATFORM_A = "MDLT-A";
+    static final String PLATFORM_B = "MDLT-B";
     static final String DEMO_ISIN = "XS0000000001";
     static final long DEMO_ISSUE_SIZE = 1_000;
+    static final String DEMO_ISIN_B = "XS0000000002";
+    static final long DEMO_ISSUE_SIZE_B = 500;
+    private static final List<String> BANKS = List.of("BANKAFRPP", "BANKBFRPP", "BANKCDEFF");
 
     private static final Logger log = LoggerFactory.getLogger(DemoDataSeeder.class);
 
     private final RtgsAccounts rtgs;
-    private final SecuritiesLedger securities;
+    private final MarketDltPlatforms marketDlts;
+    private final MarketDltReferenceData pontesReferenceData;
     private final String technicalAccount;
 
-    DemoDataSeeder(RtgsAccounts rtgs, SecuritiesLedger securities,
+    DemoDataSeeder(RtgsAccounts rtgs, MarketDltPlatforms marketDlts, MarketDltReferenceData pontesReferenceData,
                    @Value("${pontes.dlt-technical-account}") String technicalAccount) {
         this.rtgs = rtgs;
-        this.securities = securities;
+        this.marketDlts = marketDlts;
+        this.pontesReferenceData = pontesReferenceData;
         this.technicalAccount = technicalAccount;
     }
 
@@ -46,11 +56,21 @@ class DemoDataSeeder implements ApplicationRunner {
         openIfAbsent("BANKCDEFF", "Bank C", new BigDecimal("10000000"));
         openIfAbsent("BANKBFRPP", "Bank B", new BigDecimal("5000000"));
 
-        boolean alreadyIssued = securities.holdingsOf("BANKBFRPP").stream()
-                .anyMatch(h -> h.isin().equals(DEMO_ISIN));
-        if (!alreadyIssued) {
-            securities.issue("BANKBFRPP", DEMO_ISIN, DEMO_ISSUE_SIZE);
-            log.info("Demo: {} {} securities issued on the market DLT for BANKBFRPP", DEMO_ISSUE_SIZE, DEMO_ISIN);
+        for (MarketDltPlatformView platform : marketDlts.list()) {
+            // Onboarding by each market DLT operator (Identity Registry): only verified participants hold securities.
+            BANKS.forEach(marketDlts.platform(platform.id())::onboard);
+            // Links configured in Pontes by the Central Banks: a DvP needs both parties linked to the platform.
+            BANKS.forEach(bank -> pontesReferenceData.link(platform.id(), bank));
+        }
+        issueIfAbsent(PLATFORM_A, "BANKBFRPP", DEMO_ISIN, DEMO_ISSUE_SIZE);
+        issueIfAbsent(PLATFORM_B, "BANKCDEFF", DEMO_ISIN_B, DEMO_ISSUE_SIZE_B);
+    }
+
+    private void issueIfAbsent(String platform, String party, String isin, long quantity) {
+        SecuritiesLedger securities = marketDlts.platform(platform);
+        if (securities.holdingsOf(party).stream().noneMatch(h -> h.isin().equals(isin))) {
+            securities.issue(party, isin, quantity);
+            log.info("Demo: {} {} securities issued on the market DLT {} for {}", quantity, isin, platform, party);
         }
     }
 
