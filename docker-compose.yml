@@ -1,7 +1,8 @@
-# Two local Besu nodes, two separate chains run by two different operators (permissioned QBFT networks
+# Three local Besu nodes, three separate chains run by three different operators (permissioned QBFT networks
 # with 1 validator, 1 s blocks):
 # - besu: Eurosystem DLT (cash tokens), chainId 1337, port 8545;
-# - besu-market: market DLT (ERC-3643 securities and Hash-Link Contracts), chainId 1338, port 8546.
+# - besu-market-a / besu-market-b: two market DLT platforms (ERC-3643 securities and Hash-Link Contracts),
+#   chainId 1338 / 1339, ports 8546 / 8547.
 x-besu-node: &besu-node
   image: hyperledger/besu:26.9.0
   command:
@@ -33,10 +34,18 @@ services:
     ports:
       - "8545:8545"
 
-  besu-market:
+  besu-market-a:
     <<: *besu-node
-    container_name: pontes-besu-market
+    container_name: pontes-besu-market-a
     volumes:
-      - ./besu-market:/besu:ro
+      - ./besu-market-a:/besu:ro
     ports:
       - "8546:8545"
+
+  besu-market-b:
+    <<: *besu-node
+    container_name: pontes-besu-market-b
+    volumes:
+      - ./besu-market-b:/besu:ro
+    ports:
+      - "8547:8545"

@@ -12,9 +12,10 @@ import org.web3j.crypto.Hash;
 import org.web3j.utils.Numeric;
 
 /**
- * Participant ↔ account directory of the market DLT. Unlike the Eurosystem DLT, participants sign their own
+ * Participant ↔ account directory of the market DLTs. Unlike the Eurosystem DLT, participants sign their own
  * transactions here (lock, consent), so each one has a key pair. In this POC the key is derived from the
  * participant identifier and held by the application, as a custodial wallet would be: development only.
+ * A participant keeps the same address on every EVM platform, but must be onboarded on each one.
  */
 @Entity
 @Table(name = "market_dlt_account")

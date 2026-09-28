@@ -7,7 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface SecuritiesHoldingRepository extends JpaRepository<SecuritiesHolding, Long> {
 
-    Optional<SecuritiesHolding> findByPartyAndIsin(String party, String isin);
+    Optional<SecuritiesHolding> findByPlatformAndPartyAndIsin(String platform, String party, String isin);
 
-    List<SecuritiesHolding> findByParty(String party);
+    List<SecuritiesHolding> findByPlatformAndParty(String platform, String party);
 }

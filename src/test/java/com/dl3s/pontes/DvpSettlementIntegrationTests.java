@@ -37,6 +37,7 @@ class DvpSettlementIntegrationTests extends PontesIntegrationTest {
         String buyer = openParticipant(buyerRtgsBalance);
         securities.onboard(seller);
         securities.onboard(buyer);
+        linkInPontes(MARKET_DLT_A, seller, buyer);
         String isin = unique("XS");
         securities.issue(seller, isin, 100);
         return new Trade(seller, buyer, isin);
@@ -45,7 +46,7 @@ class DvpSettlementIntegrationTests extends PontesIntegrationTest {
     /** Phase 1: Initialisation at Pontes, then locking of the securities in a Hash-Link Contract. */
     private DvpView initialiseAndLock(Trade trade, long cash, CashLegOption option, Duration timeout) {
         DvpView dvp = dvpSettlement.initialise(new DvpInitialisation(unique("TRADE"), trade.seller(), trade.buyer(),
-                BigDecimal.valueOf(cash), option, timeout));
+                BigDecimal.valueOf(cash), option, MARKET_DLT_A, trade.isin(), QUANTITY, timeout));
         securities.lock(new HashLinkTerms(dvp.dvpId(), trade.seller(), trade.buyer(), trade.isin(), QUANTITY,
                 dvp.executionKeyHash(), dvp.cancellationKeyHash(), dvp.timeout()));
         return dvp;
@@ -240,8 +241,9 @@ class DvpSettlementIntegrationTests extends PontesIntegrationTest {
                 .hasMessageContaining("not a verified participant");
 
         Trade trade = newTrade(0);
+        linkInPontes(MARKET_DLT_A, outsider); // linked in Pontes, but not onboarded on the market DLT
         DvpView dvp = dvpSettlement.initialise(new DvpInitialisation(unique("TRADE"), trade.seller(), outsider,
-                BigDecimal.TEN, CashLegOption.T2, null));
+                BigDecimal.TEN, CashLegOption.T2, MARKET_DLT_A, trade.isin(), 1, null));
         assertThatThrownBy(() -> securities.lock(new HashLinkTerms(dvp.dvpId(), trade.seller(), outsider,
                 trade.isin(), 1, dvp.executionKeyHash(), dvp.cancellationKeyHash(), dvp.timeout())))
                 .isInstanceOf(IllegalStateException.class)
@@ -272,7 +274,7 @@ class DvpSettlementIntegrationTests extends PontesIntegrationTest {
     void insufficientSecuritiesPosition_sellerCannotLock() {
         Trade trade = newTrade(0);
         DvpView dvp = dvpSettlement.initialise(new DvpInitialisation(unique("TRADE"), trade.seller(), trade.buyer(),
-                BigDecimal.TEN, CashLegOption.T2, null));
+                BigDecimal.TEN, CashLegOption.T2, MARKET_DLT_A, trade.isin(), 101, null));
 
         assertThatThrownBy(() -> securities.lock(new HashLinkTerms(dvp.dvpId(), trade.seller(), trade.buyer(),
                 trade.isin(), 101, dvp.executionKeyHash(), dvp.cancellationKeyHash(), dvp.timeout())))
@@ -295,7 +297,7 @@ class DvpSettlementIntegrationTests extends PontesIntegrationTest {
     void idempotentOnTradeReferenceAndPayment() {
         Trade trade = newTrade(1_000_000);
         var request = new DvpInitialisation(unique("TRADE"), trade.seller(), trade.buyer(), BigDecimal.valueOf(100_000),
-                CashLegOption.T2, null);
+                CashLegOption.T2, MARKET_DLT_A, trade.isin(), 10, null);
 
         DvpView first = dvpSettlement.initialise(request);
         assertThat(dvpSettlement.initialise(request).dvpId()).isEqualTo(first.dvpId());

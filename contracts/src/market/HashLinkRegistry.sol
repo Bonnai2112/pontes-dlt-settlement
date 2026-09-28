@@ -19,6 +19,9 @@ import {SecurityToken} from "./SecurityToken.sol";
  * securities, and Pontes never reveals both keys for the same DvP. The destination is fixed at lock time,
  * so a key seen in the mempool cannot divert the securities.
  *
+ * The key presented to unwind a contract is recorded on it: in a cross-platform DvD, the counterparty reads
+ * the Execution Key revealed on one market DLT to unwind its own contract on the other.
+ *
  * The securities remain registered with the seller while locked: the registry is an agent of each listed
  * ERC-3643 token and freezes them (freezePartialTokens), then delivers them with forcedTransfer.
  */
@@ -38,6 +41,7 @@ contract HashLinkRegistry is AccessControl {
         uint64 timeout;
         Status status;
         Resolution resolution;
+        bytes32 presentedKey;
     }
 
     mapping(bytes32 dvpId => HashLink) private _hashLinks;
@@ -95,7 +99,7 @@ contract HashLinkRegistry is AccessControl {
         if (quantity > free) revert InsufficientPosition(msg.sender, free, quantity);
 
         _hashLinks[dvpId] = HashLink(token, msg.sender, buyer, quantity, executionKeyHash, cancellationKeyHash, timeout,
-            Status.LOCKED, Resolution.NONE);
+            Status.LOCKED, Resolution.NONE, bytes32(0));
         token.freezePartialTokens(msg.sender, quantity);
         emit Locked(dvpId, msg.sender, buyer, address(token), quantity, timeout);
     }
@@ -104,6 +108,7 @@ contract HashLinkRegistry is AccessControl {
     function execute(bytes32 dvpId, bytes32 executionKey) external {
         HashLink storage h = _locked(dvpId);
         if (sha256(abi.encodePacked(executionKey)) != h.executionKeyHash) revert InvalidKey();
+        h.presentedKey = executionKey;
         _deliverToBuyer(h, Resolution.EXECUTION_KEY);
         emit Executed(dvpId, executionKey);
     }
@@ -113,6 +118,7 @@ contract HashLinkRegistry is AccessControl {
         HashLink storage h = _locked(dvpId);
         if (sha256(abi.encodePacked(cancellationKey)) != h.cancellationKeyHash) revert InvalidKey();
         if (block.timestamp < h.timeout) revert TimeoutNotReached(h.timeout);
+        h.presentedKey = cancellationKey;
         _returnToSeller(h, Resolution.CANCELLATION_KEY);
         emit Cancelled(dvpId, cancellationKey);
     }

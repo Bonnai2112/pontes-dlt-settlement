@@ -39,13 +39,14 @@ class ApiGatewayWebTests {
         openAccount(seller, "0");
         openAccount(buyer, "500000");
         for (String party : new String[] {seller, buyer}) {
-            mvc.perform(post("/api/market-dlt/participants").contentType(MediaType.APPLICATION_JSON)
+            mvc.perform(post("/api/market-dlt/MDLT-A/participants").contentType(MediaType.APPLICATION_JSON)
                             .content("""
                                     {"party":"%s"}""".formatted(party)))
                     .andExpect(status().isCreated())
                     .andExpect(jsonPath("$.party").value(party));
+            linkInPontes("MDLT-A", party);
         }
-        mvc.perform(post("/api/market-dlt/issuances").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/market-dlt/MDLT-A/issuances").contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"party":"%s","isin":"%s","quantity":50}""".formatted(seller, isin)))
                 .andExpect(status().isCreated())
@@ -54,8 +55,9 @@ class ApiGatewayWebTests {
         // Phase 1: the seller initialises at Pontes and receives the key hashes.
         String initialisation = mvc.perform(post("/api/eii/dvp").contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"tradeReference":"%s","seller":"%s","buyer":"%s","cashAmount":200000,"cashLeg":"T2"}"""
-                                .formatted(unique("TRADE"), seller, buyer)))
+                                {"tradeReference":"%s","seller":"%s","buyer":"%s","cashAmount":200000,"cashLeg":"T2",
+                                 "marketDltPlatform":"MDLT-A","isin":"%s","quantity":20}"""
+                                .formatted(unique("TRADE"), seller, buyer, isin)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("INITIALISED"))
                 .andExpect(jsonPath("$.executionKey").doesNotExist())
@@ -66,7 +68,7 @@ class ApiGatewayWebTests {
         String timeout = JsonPath.read(initialisation, "$.timeout");
 
         // The seller locks their securities in a Hash-Link Contract on the market DLT.
-        mvc.perform(post("/api/market-dlt/hash-link-contracts").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/market-dlt/MDLT-A/hash-link-contracts").contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"dvpId":"%s","seller":"%s","buyer":"%s","isin":"%s","quantity":20,
                                  "executionKeyHash":"%s","cancellationKeyHash":"%s","timeout":"%s"}"""
@@ -98,7 +100,7 @@ class ApiGatewayWebTests {
                 .andReturn().getResponse().getContentAsString();
         String executionKey = JsonPath.read(revealed, "$.key");
 
-        mvc.perform(post("/api/market-dlt/hash-link-contracts/{id}/execute", dvpId).contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/market-dlt/MDLT-A/hash-link-contracts/{id}/execute", dvpId).contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"key":"%s"}""".formatted(executionKey)))
                 .andExpect(status().isOk())
@@ -106,7 +108,7 @@ class ApiGatewayWebTests {
 
         mvc.perform(get("/api/target/accounts/{id}", buyer))
                 .andExpect(jsonPath("$.balance").value(300000));
-        mvc.perform(get("/api/market-dlt/holdings/{party}", buyer))
+        mvc.perform(get("/api/market-dlt/MDLT-A/holdings/{party}", buyer))
                 .andExpect(jsonPath("$[0].isin").value(isin))
                 .andExpect(jsonPath("$[0].available").value(20));
     }
@@ -115,9 +117,12 @@ class ApiGatewayWebTests {
     void optionAPaymentWithInsufficientFundsReturns422() throws Exception {
         String seller = unique("SELLER");
         String buyer = unique("BUYER");
+        linkInPontes("MDLT-A", seller);
+        linkInPontes("MDLT-A", buyer);
         String initialisation = mvc.perform(post("/api/eii/dvp").contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"tradeReference":"%s","seller":"%s","buyer":"%s","cashAmount":1000,"cashLeg":"CASH_TOKEN"}"""
+                                {"tradeReference":"%s","seller":"%s","buyer":"%s","cashAmount":1000,"cashLeg":"CASH_TOKEN",
+                                 "marketDltPlatform":"MDLT-A","isin":"XS0000000001","quantity":1}"""
                                 .formatted(unique("TRADE"), seller, buyer)))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
@@ -145,9 +150,47 @@ class ApiGatewayWebTests {
     void sellerEqualToBuyerRejectedWith400() throws Exception {
         mvc.perform(post("/api/eii/dvp").contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"tradeReference":"%s","seller":"A","buyer":"A","cashAmount":10,"cashLeg":"CASH_TOKEN"}""".formatted(unique("TRADE"))))
+                                {"tradeReference":"%s","seller":"A","buyer":"A","cashAmount":10,"cashLeg":"CASH_TOKEN",
+                                 "marketDltPlatform":"MDLT-A","isin":"XS0000000001","quantity":1}""".formatted(unique("TRADE"))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail").value("Seller and buyer must be different"));
+    }
+
+    @Test
+    void dvpRefusedOnAPlatformTheBuyerIsNotLinkedTo() throws Exception {
+        String seller = unique("SELLER");
+        String buyer = unique("BUYER");
+        linkInPontes("MDLT-A", seller);
+        linkInPontes("MDLT-B", seller);
+        linkInPontes("MDLT-A", buyer);
+        mvc.perform(post("/api/eii/dvp").contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"tradeReference":"%s","seller":"%s","buyer":"%s","cashAmount":10,"cashLeg":"T2",
+                                 "marketDltPlatform":"MDLT-B","isin":"XS0000000002","quantity":1}"""
+                                .formatted(unique("TRADE"), seller, buyer)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(buyer + " is not linked to the market DLT platform MDLT-B"));
+        mvc.perform(post("/api/eii/dvp").contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"tradeReference":"%s","seller":"%s","buyer":"%s","cashAmount":10,"cashLeg":"T2",
+                                 "marketDltPlatform":"MDLT-Z","isin":"XS0000000002","quantity":1}"""
+                                .formatted(unique("TRADE"), seller, buyer)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("Market DLT platform not configured in Pontes: MDLT-Z"));
+    }
+
+    @Test
+    void marketDltPlatformsAreListedAndScoped() throws Exception {
+        mvc.perform(get("/api/market-dlt"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value("MDLT-A"))
+                .andExpect(jsonPath("$[1].id").value("MDLT-B"))
+                .andExpect(jsonPath("$[1].ledger").value("simulated"));
+        mvc.perform(get("/api/market-dlt/{platform}/holdings/{party}", "MDLT-Z", "BANKAFRPP"))
+                .andExpect(status().isNotFound());
+        mvc.perform(get("/api/eii/market-dlt-platforms"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].platform").value("MDLT-A"));
     }
 
     @Test
@@ -161,6 +204,15 @@ class ApiGatewayWebTests {
         mvc.perform(get("/actuator/modulith"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.interop").exists());
+    }
+
+    private void linkInPontes(String platform, String participant) throws Exception {
+        mvc.perform(post("/api/eii/market-dlt-platforms/{platform}/participants", platform)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"participant":"%s"}""".formatted(participant)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.platform").value(platform));
     }
 
     private void openAccount(String accountId, String balance) throws Exception {

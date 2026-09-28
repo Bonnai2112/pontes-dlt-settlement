@@ -3,8 +3,9 @@ package com.dl3s.pontes.marketdlt;
 import java.util.List;
 
 /**
- * Public API of the tokenised securities ledger. Only participants onboarded by the market DLT operator
- * (registered in its Identity Registry, as with ERC-3643) can hold, lock or receive securities.
+ * Public API of the tokenised securities ledger of one market DLT platform (see {@link MarketDltPlatforms}).
+ * Only participants onboarded by the market DLT operator (registered in its Identity Registry, as with
+ * ERC-3643) can hold, lock or receive securities.
  */
 public interface SecuritiesLedger {
 

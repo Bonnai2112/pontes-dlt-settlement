@@ -12,8 +12,10 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
 
 /**
@@ -23,7 +25,7 @@ import jakarta.persistence.Version;
  * connection to Pontes: the cryptographic proof, or the counterparty's consent, is enough.
  */
 @Entity
-@Table(name = "market_hash_link_contract")
+@Table(name = "market_hash_link_contract", uniqueConstraints = @UniqueConstraint(columnNames = {"platform", "dvpId"}))
 public class HashLinkContract {
 
     /** A key is exchanged in hexadecimal; its hash covers its raw bytes. */
@@ -35,6 +37,14 @@ public class HashLinkContract {
     public enum Resolution { EXECUTION_KEY, CANCELLATION_KEY, SELLER_CONSENT, BUYER_CONSENT }
 
     @Id
+    @GeneratedValue
+    private Long id;
+
+    /** Market DLT platform holding the contract: a DvP identifier is unique per platform. */
+    @Column(nullable = false)
+    private String platform;
+
+    @Column(nullable = false)
     private String dvpId;
 
     @Column(nullable = false)
@@ -64,13 +74,16 @@ public class HashLinkContract {
     @Enumerated(EnumType.STRING)
     private Resolution resolution;
 
+    /** Key presented to unwind the contract, public from then on (read by the counterparty of a DvD). */
+    private String presentedKey;
+
     @Version
     private long version;
 
     protected HashLinkContract() {
     }
 
-    public HashLinkContract(String dvpId, String seller, String buyer, String isin, long quantity,
+    public HashLinkContract(String platform, String dvpId, String seller, String buyer, String isin, long quantity,
                             String executionKeyHash, String cancellationKeyHash, Instant timeout) {
         if (seller.equals(buyer)) {
             throw new IllegalArgumentException("Seller and buyer must be different");
@@ -81,6 +94,7 @@ public class HashLinkContract {
         if (executionKeyHash.equalsIgnoreCase(cancellationKeyHash)) {
             throw new IllegalArgumentException("Execution and cancellation hashes must be different");
         }
+        this.platform = platform;
         this.dvpId = dvpId;
         this.seller = seller;
         this.buyer = buyer;
@@ -96,6 +110,7 @@ public class HashLinkContract {
     public void execute(String executionKey) {
         requireLocked();
         requireKey(executionKey, executionKeyHash, "Invalid Execution Key");
+        presentedKey = executionKey.toLowerCase();
         unwind(Status.EXECUTED, Resolution.EXECUTION_KEY);
     }
 
@@ -109,6 +124,7 @@ public class HashLinkContract {
         if (now.isBefore(timeout.truncatedTo(ChronoUnit.SECONDS))) {
             throw new IllegalStateException("Timeout of Hash-Link Contract " + dvpId + " not reached (" + timeout + ")");
         }
+        presentedKey = cancellationKey.toLowerCase();
         unwind(Status.CANCELLED, Resolution.CANCELLATION_KEY);
     }
 
@@ -160,6 +176,7 @@ public class HashLinkContract {
         }
     }
 
+    public String getPlatform() { return platform; }
     public String getDvpId() { return dvpId; }
     public String getSeller() { return seller; }
     public String getBuyer() { return buyer; }
@@ -170,4 +187,5 @@ public class HashLinkContract {
     public Instant getTimeout() { return timeout; }
     public Status getStatus() { return status; }
     public Resolution getResolution() { return resolution; }
+    public String getPresentedKey() { return presentedKey; }
 }

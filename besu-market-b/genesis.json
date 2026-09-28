@@ -1,0 +1,24 @@
+{
+  "config" : {
+    "chainId" : 1339,
+    "berlinBlock" : 0,
+    "londonBlock" : 0,
+    "shanghaiTime" : 0,
+    "cancunTime" : 0,
+    "zeroBaseFee" : true,
+    "contractSizeLimit" : 2147483647,
+    "qbft" : {
+      "blockperiodseconds" : 1,
+      "epochlength" : 30000,
+      "requesttimeoutseconds" : 4
+    }
+  },
+  "nonce" : "0x0",
+  "timestamp" : "0x58ee40ba",
+  "gasLimit" : "0x1fffffffffffff",
+  "difficulty" : "0x1",
+  "mixHash" : "0x63746963616c2062797a616e74696e65206661756c7420746f6c6572616e6365",
+  "coinbase" : "0x0000000000000000000000000000000000000000",
+  "alloc" : { },
+  "extraData" : "0xf83aa00000000000000000000000000000000000000000000000000000000000000000d5947fef4d909f0f578df78b6159751b864f63607a5cc080c0"
+}

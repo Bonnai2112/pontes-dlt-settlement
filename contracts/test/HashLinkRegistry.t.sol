@@ -59,6 +59,7 @@ contract HashLinkRegistryTest is MarketFixture {
         HashLinkRegistry.HashLink memory h = hashLinks.hashLink(DVP);
         assertEq(uint8(h.status), uint8(HashLinkRegistry.Status.EXECUTED));
         assertEq(uint8(h.resolution), uint8(HashLinkRegistry.Resolution.EXECUTION_KEY));
+        assertEq(h.presentedKey, EXECUTION_KEY);
         assertEq(token.balanceOf(bankA), 40);
         assertEq(token.balanceOf(bankB), 60);
         assertEq(token.getFrozenTokens(bankB), 0);
@@ -82,6 +83,7 @@ contract HashLinkRegistryTest is MarketFixture {
         HashLinkRegistry.HashLink memory h = hashLinks.hashLink(DVP);
         assertEq(uint8(h.status), uint8(HashLinkRegistry.Status.CANCELLED));
         assertEq(uint8(h.resolution), uint8(HashLinkRegistry.Resolution.CANCELLATION_KEY));
+        assertEq(h.presentedKey, CANCELLATION_KEY);
         assertEq(token.balanceOf(bankB), 100);
         assertEq(token.getFrozenTokens(bankB), 0);
     }

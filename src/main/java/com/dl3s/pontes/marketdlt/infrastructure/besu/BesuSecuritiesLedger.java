@@ -14,13 +14,7 @@ import java.util.NoSuchElementException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.DisposableBean;
-import org.springframework.beans.factory.InitializingBean;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.annotation.Profile;
 import org.springframework.core.io.ClassPathResource;
-import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 import org.web3j.abi.FunctionEncoder;
 import org.web3j.abi.FunctionReturnDecoder;
 import org.web3j.abi.TypeReference;
@@ -49,9 +43,11 @@ import com.dl3s.pontes.marketdlt.HashLinkTerms;
 import com.dl3s.pontes.marketdlt.HoldingView;
 import com.dl3s.pontes.marketdlt.ParticipantView;
 import com.dl3s.pontes.marketdlt.SecuritiesLedger;
+import com.dl3s.pontes.marketdlt.infrastructure.MarketDltProperties;
 
 /**
- * Market DLT on Hyperledger Besu, a chain distinct from the Eurosystem DLT: one ERC-3643 token
+ * Market DLT platform on Hyperledger Besu, on its own chain, distinct from the Eurosystem DLT and from the other
+ * platforms: one ERC-3643 token
  * ({@code SecurityToken}) per ISIN, an {@code IdentityRegistry} of the onboarded participants and the
  * {@code HashLinkRegistry} of the Hash-Link Contracts, agent of every token.
  *
@@ -60,11 +56,7 @@ import com.dl3s.pontes.marketdlt.SecuritiesLedger;
  * a key needs no identity, so the operator submits it on behalf of the party (URD §4.2, footnote 8).
  * The contracts enforce the rules; this adapter only translates their rejections into business exceptions.
  */
-@Component
-@Profile("market-besu")
-@EnableConfigurationProperties(MarketBesuProperties.class)
-@Transactional
-class BesuSecuritiesLedger implements SecuritiesLedger, InitializingBean, DisposableBean {
+public class BesuSecuritiesLedger implements SecuritiesLedger {
 
     private static final Logger log = LoggerFactory.getLogger(BesuSecuritiesLedger.class);
 
@@ -77,7 +69,8 @@ class BesuSecuritiesLedger implements SecuritiesLedger, InitializingBean, Dispos
             List.of("NONE", "EXECUTION_KEY", "CANCELLATION_KEY", "SELLER_CONSENT", "BUYER_CONSENT");
     private static final HexFormat HEX = HexFormat.of();
 
-    private final MarketBesuProperties properties;
+    private final String platform;
+    private final MarketDltProperties.Besu properties;
     private final MarketAccountRepository accounts;
     private final ListedSecurityRepository listedSecurities;
     private final Web3j web3j;
@@ -87,8 +80,9 @@ class BesuSecuritiesLedger implements SecuritiesLedger, InitializingBean, Dispos
     private String identityRegistry;
     private String hashLinkRegistry;
 
-    BesuSecuritiesLedger(MarketBesuProperties properties, MarketAccountRepository accounts,
+    BesuSecuritiesLedger(String platform, MarketDltProperties.Besu properties, MarketAccountRepository accounts,
                          ListedSecurityRepository listedSecurities) {
+        this.platform = platform;
         this.properties = properties;
         this.accounts = accounts;
         this.listedSecurities = listedSecurities;
@@ -98,16 +92,14 @@ class BesuSecuritiesLedger implements SecuritiesLedger, InitializingBean, Dispos
     }
 
     /** Fresh contracts at each startup, consistent with the in-memory database of the POC. */
-    @Override
-    public void afterPropertiesSet() throws IOException {
+    void deployRegistries() {
         identityRegistry = deploy("IdentityRegistry", new Address(operator.getAddress()));
         hashLinkRegistry = deploy("HashLinkRegistry", new Address(operator.getAddress()));
-        log.info("Market DLT on Besu {}: IdentityRegistry {}, HashLinkRegistry {} (operator {})",
-                properties.rpcUrl(), identityRegistry, hashLinkRegistry, operator.getAddress());
+        log.info("Market DLT {} on Besu {}: IdentityRegistry {}, HashLinkRegistry {} (operator {})",
+                platform, properties.rpcUrl(), identityRegistry, hashLinkRegistry, operator.getAddress());
     }
 
-    @Override
-    public void destroy() {
+    public void stop() {
         web3j.shutdown();
     }
 
@@ -124,7 +116,6 @@ class BesuSecuritiesLedger implements SecuritiesLedger, InitializingBean, Dispos
     }
 
     @Override
-    @Transactional(readOnly = true)
     public List<ParticipantView> participants() {
         return accounts.findAll().stream()
                 .filter(a -> isVerified(a.getAddress()))
@@ -139,7 +130,8 @@ class BesuSecuritiesLedger implements SecuritiesLedger, InitializingBean, Dispos
         if (quantity <= 0) {
             throw new IllegalArgumentException("Quantity must be strictly positive");
         }
-        String token = listedSecurities.findById(isin).map(ListedSecurity::getAddress).orElseGet(() -> list(isin));
+        String token = listedSecurities.findByPlatformAndIsin(platform, isin).map(ListedSecurity::getAddress)
+                .orElseGet(() -> list(isin));
         MarketAccount holder = accountOf(party);
         send(operator, token, new Function("mint",
                 List.of(new Address(holder.getAddress()), new Uint256(quantity)), List.of()));
@@ -153,16 +145,15 @@ class BesuSecuritiesLedger implements SecuritiesLedger, InitializingBean, Dispos
         send(operator, token, new Function("grantRole",
                 List.of(new Bytes32(AGENT_ROLE), new Address(hashLinkRegistry)), List.of()));
         send(operator, hashLinkRegistry, new Function("listToken", List.of(new Address(token)), List.of()));
-        listedSecurities.save(new ListedSecurity(isin, token));
-        log.info("Security {} listed on the market DLT: ERC-3643 token {}", isin, token);
+        listedSecurities.save(new ListedSecurity(platform, isin, token));
+        log.info("Security {} listed on the market DLT {}: ERC-3643 token {}", isin, platform, token);
         return token;
     }
 
     @Override
-    @Transactional(readOnly = true)
     public List<HoldingView> holdingsOf(String party) {
         return accounts.findById(party).stream()
-                .flatMap(account -> listedSecurities.findAll().stream()
+                .flatMap(account -> listedSecurities.findByPlatform(platform).stream()
                         .map(s -> holding(party, account.getAddress(), s.getIsin(), s.getAddress())))
                 .filter(h -> h.available() > 0 || h.locked() > 0)
                 .toList();
@@ -186,7 +177,7 @@ class BesuSecuritiesLedger implements SecuritiesLedger, InitializingBean, Dispos
             }
             return toView(terms.dvpId(), existing);
         }
-        ListedSecurity security = listedSecurities.findById(terms.isin())
+        ListedSecurity security = listedSecurities.findByPlatformAndIsin(platform, terms.isin())
                 .orElseThrow(() -> new IllegalStateException("Insufficient securities position for " + terms.seller()));
         MarketAccount buyer = accountOf(terms.buyer());
         accountOf(terms.seller());
@@ -199,7 +190,6 @@ class BesuSecuritiesLedger implements SecuritiesLedger, InitializingBean, Dispos
     }
 
     @Override
-    @Transactional(readOnly = true)
     public HashLinkContractView contract(String dvpId) {
         OnChainHashLink hashLink = read(dvpId);
         if (!hashLink.exists()) {
@@ -241,7 +231,8 @@ class BesuSecuritiesLedger implements SecuritiesLedger, InitializingBean, Dispos
     }
 
     private record OnChainHashLink(String token, String seller, String buyer, long quantity, String executionKeyHash,
-                                   String cancellationKeyHash, Instant timeout, String status, String resolution) {
+                                   String cancellationKeyHash, Instant timeout, String status, String resolution,
+                                   String presentedKey) {
         boolean exists() {
             return !status.equals("NONE");
         }
@@ -251,20 +242,24 @@ class BesuSecuritiesLedger implements SecuritiesLedger, InitializingBean, Dispos
         List<Type> values = call(hashLinkRegistry, new Function("hashLink", List.of(dvpKey(dvpId)), List.of(
                 new TypeReference<Address>() { }, new TypeReference<Address>() { }, new TypeReference<Address>() { },
                 new TypeReference<Uint256>() { }, new TypeReference<Bytes32>() { }, new TypeReference<Bytes32>() { },
-                new TypeReference<Uint64>() { }, new TypeReference<Uint8>() { }, new TypeReference<Uint8>() { })));
+                new TypeReference<Uint64>() { }, new TypeReference<Uint8>() { }, new TypeReference<Uint8>() { },
+                new TypeReference<Bytes32>() { })));
         return new OnChainHashLink((String) values.get(0).getValue(), (String) values.get(1).getValue(),
                 (String) values.get(2).getValue(), ((BigInteger) values.get(3).getValue()).longValueExact(),
                 HEX.formatHex((byte[]) values.get(4).getValue()), HEX.formatHex((byte[]) values.get(5).getValue()),
                 Instant.ofEpochSecond(((BigInteger) values.get(6).getValue()).longValueExact()),
                 STATUSES.get(((BigInteger) values.get(7).getValue()).intValueExact()),
-                RESOLUTIONS.get(((BigInteger) values.get(8).getValue()).intValueExact()));
+                RESOLUTIONS.get(((BigInteger) values.get(8).getValue()).intValueExact()),
+                HEX.formatHex((byte[]) values.get(9).getValue()));
     }
 
     private HashLinkContractView toView(String dvpId, OnChainHashLink h) {
-        String isin = listedSecurities.findByAddressIgnoreCase(h.token()).map(ListedSecurity::getIsin).orElse(h.token());
+        String isin = listedSecurities.findByPlatformAndAddressIgnoreCase(platform, h.token())
+                .map(ListedSecurity::getIsin).orElse(h.token());
+        boolean unwoundByKey = h.resolution().equals("EXECUTION_KEY") || h.resolution().equals("CANCELLATION_KEY");
         return new HashLinkContractView(dvpId, partyAt(h.seller()), partyAt(h.buyer()), isin, h.quantity(),
                 h.executionKeyHash(), h.cancellationKeyHash(), h.timeout(), h.status(),
-                h.resolution().equals("NONE") ? null : h.resolution());
+                h.resolution().equals("NONE") ? null : h.resolution(), unwoundByKey ? h.presentedKey() : null);
     }
 
     /** The contract indexes the Hash-Link Contracts by keccak256 of the Pontes DvP identifier. */

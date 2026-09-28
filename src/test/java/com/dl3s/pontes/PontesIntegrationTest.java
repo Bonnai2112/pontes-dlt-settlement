@@ -12,8 +12,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 
 import com.dl3s.pontes.cashtoken.CashTokenLedger;
 import com.dl3s.pontes.cashtoken.TokenOperationView;
+import com.dl3s.pontes.interop.MarketDltReferenceData;
 import com.dl3s.pontes.interop.application.DvpSettlementService;
 import com.dl3s.pontes.marketdlt.HoldingView;
+import com.dl3s.pontes.marketdlt.MarketDltPlatforms;
 import com.dl3s.pontes.marketdlt.SecuritiesLedger;
 import com.dl3s.pontes.rtgs.RtgsAccounts;
 import com.dl3s.pontes.trigger.TriggerBackend;
@@ -26,12 +28,23 @@ import com.dl3s.pontes.trigger.TriggerBackend;
 abstract class PontesIntegrationTest {
 
     protected static final Duration ASYNC_TIMEOUT = Duration.ofSeconds(10);
+    protected static final String MARKET_DLT_A = "MDLT-A";
+    protected static final String MARKET_DLT_B = "MDLT-B";
 
     @Autowired protected RtgsAccounts rtgs;
     @Autowired protected TriggerBackend triggerBackend;
     @Autowired protected CashTokenLedger cashTokens;
-    @Autowired protected SecuritiesLedger securities;
     @Autowired protected DvpSettlementService dvpSettlement;
+    @Autowired protected MarketDltReferenceData pontesReferenceData;
+    @Autowired protected MarketDltPlatforms marketDlts;
+
+    /** Market DLT platform A, where most scenarios take place. */
+    protected SecuritiesLedger securities;
+
+    @Autowired
+    void selectPlatformA(MarketDltPlatforms platforms) {
+        this.securities = platforms.platform(MARKET_DLT_A);
+    }
 
     @Value("${pontes.dlt-technical-account}")
     protected String technicalAccount;
@@ -55,8 +68,19 @@ abstract class PontesIntegrationTest {
         return rtgs.get(accountId).balance();
     }
 
+    /** Central Bank configuration in Pontes: the participants may settle DvPs on this platform. */
+    protected void linkInPontes(String platform, String... participants) {
+        for (String participant : participants) {
+            pontesReferenceData.link(platform, participant);
+        }
+    }
+
     protected HoldingView holding(String party, String isin) {
-        return securities.holdingsOf(party).stream()
+        return holding(securities, party, isin);
+    }
+
+    protected static HoldingView holding(SecuritiesLedger platform, String party, String isin) {
+        return platform.holdingsOf(party).stream()
                 .filter(h -> h.isin().equals(isin))
                 .findFirst()
                 .orElse(new HoldingView(party, isin, 0, 0));

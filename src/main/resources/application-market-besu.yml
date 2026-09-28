@@ -1,9 +1,18 @@
+# Both market DLT platforms on their own Besu chain (besu-market-a and besu-market-b in docker-compose.yml),
+# distinct from the Eurosystem DLT. The operator keys are development keys generated for this POC (no funds
+# needed on a zero-fee network): never reuse them outside a local environment.
 pontes:
   market-dlt:
-    besu:
-      # Market DLT node (besu-market in docker-compose.yml): a chain distinct from the Eurosystem DLT.
-      rpc-url: http://localhost:8546
-      chain-id: 1338
-      # Development key of the market DLT operator, generated for this POC (no funds needed on a zero-fee
-      # network). Never reuse it outside a local environment.
-      operator-private-key: cce753032cafe278f0cf95391af4de4aeb9c46eae962bedc24e922c605fc709e
+    platforms:
+      - id: MDLT-A
+        name: Market DLT A
+        besu:
+          rpc-url: http://localhost:8546
+          chain-id: 1338
+          operator-private-key: cce753032cafe278f0cf95391af4de4aeb9c46eae962bedc24e922c605fc709e
+      - id: MDLT-B
+        name: Market DLT B
+        besu:
+          rpc-url: http://localhost:8547
+          chain-id: 1339
+          operator-private-key: 958c708aa8036128baa18fadd16c16dbeb426e9c78e2089592b3ce3752924e43

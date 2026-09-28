@@ -5,9 +5,13 @@
 ### Trade references include {{$timestamp}}, so the scenario can be replayed without restarting.
 ### Prerequisite: application running (mvn spring-boot:run) with pontes.demo.enabled=true:
 ###   RTGS accounts EUROSYSTEM-DLT-TA (0), BANKAFRPP (10 M), BANKCDEFF (10 M), BANKBFRPP (5 M)
-###   digital bond XS0000000001: 1,000 units held by BANKBFRPP (market DLT)
+###   the three banks onboarded on both market DLT platforms and linked to them in Pontes
+###   digital bond XS0000000001: 1,000 units held by BANKBFRPP on MDLT-A
+###   digital bond XS0000000002: 500 units held by BANKCDEFF on MDLT-B
 ### =====================================================================
 @host = http://localhost:8080
+@marketA = MDLT-A
+@marketB = MDLT-B
 
 ### ---------------------------------------------------------------------
 ### 1. TARGET Services (RTGS / ESMIG): central bank money accounts
@@ -26,30 +30,38 @@ Content-Type: application/json
 { "accountId": "BANKDDEFF", "owner": "Bank D", "initialBalance": 3000000 }
 
 ### ---------------------------------------------------------------------
-### 2. Market DLT (simulated, or Besu + ERC-3643 with the market-besu profile): participants and positions
+### 2. Market DLT platforms (simulated, or each on its own Besu chain with the market-besu profile)
+###    Two platforms, MDLT-A and MDLT-B, run by two market DLT operators; the scenarios below use MDLT-A,
+###    section 8 uses MDLT-B.
 ### ---------------------------------------------------------------------
 
+### Platforms and their ledger technology
+GET {{host}}/api/market-dlt
+
+### Pontes reference data: platforms configured in Pontes and Participants linked to them by their Central Bank
+GET {{host}}/api/eii/market-dlt-platforms
+
 ### Participants onboarded in the Identity Registry (address on-chain with market-besu)
-GET {{host}}/api/market-dlt/participants
+GET {{host}}/api/market-dlt/{{marketA}}/participants
 
 ### Onboarding of a new participant by the market DLT operator (KYC done): only onboarded participants
 ### can hold, lock or receive securities
-POST {{host}}/api/market-dlt/participants
+POST {{host}}/api/market-dlt/{{marketA}}/participants
 Content-Type: application/json
 
 { "party": "BANKDDEFF" }
 
 ### Issuance to a participant that is not onboarded: 409
-POST {{host}}/api/market-dlt/issuances
+POST {{host}}/api/market-dlt/{{marketA}}/issuances
 Content-Type: application/json
 
 { "party": "NOTONBOARDED", "isin": "XS0000000002", "quantity": 1 }
 
 ### Position of BANKBFRPP (seller of the digital bond)
-GET {{host}}/api/market-dlt/holdings/BANKBFRPP
+GET {{host}}/api/market-dlt/{{marketA}}/holdings/BANKBFRPP
 
 ### (optional) Primary issuance of another tokenised security
-POST {{host}}/api/market-dlt/issuances
+POST {{host}}/api/market-dlt/{{marketA}}/issuances
 Content-Type: application/json
 
 { "party": "BANKBFRPP", "isin": "XS0000000002", "quantity": 500 }
@@ -103,7 +115,10 @@ Content-Type: application/json
   "seller": "BANKBFRPP",
   "buyer": "BANKCDEFF",
   "cashAmount": 1000000,
-  "cashLeg": "CASH_TOKEN"
+  "cashLeg": "CASH_TOKEN",
+  "marketDltPlatform": "{{marketA}}",
+  "isin": "XS0000000001",
+  "quantity": 100
 }
 
 ### 4.2 Replay the same tradeReference: idempotent (same dvpId, same hashes, no new instance)
@@ -115,12 +130,15 @@ Content-Type: application/json
   "seller": "BANKBFRPP",
   "buyer": "BANKCDEFF",
   "cashAmount": 1000000,
-  "cashLeg": "CASH_TOKEN"
+  "cashLeg": "CASH_TOKEN",
+  "marketDltPlatform": "{{marketA}}",
+  "isin": "XS0000000001",
+  "quantity": 100
 }
 
 ### 4.3 Phase 1 — the seller locks its securities on the market DLT in a Hash-Link Contract (201)
 ###     409 if the available position is insufficient
-POST {{host}}/api/market-dlt/hash-link-contracts
+POST {{host}}/api/market-dlt/{{marketA}}/hash-link-contracts
 Content-Type: application/json
 
 {
@@ -138,7 +156,7 @@ Content-Type: application/json
 GET {{host}}/api/eii/dvp/{{dvpA.response.body.$.dvpId}}
 
 ### ... and the Hash-Link Contract on the market DLT: same hashes, status LOCKED
-GET {{host}}/api/market-dlt/hash-link-contracts/{{dvpA.response.body.$.dvpId}}
+GET {{host}}/api/market-dlt/{{marketA}}/hash-link-contracts/{{dvpA.response.body.$.dvpId}}
 
 ### 4.5 The Execution Key is not revealed before payment: 409
 POST {{host}}/api/eii/dvp/{{dvpA.response.body.$.dvpId}}/reveal-key
@@ -167,19 +185,19 @@ Content-Type: application/json
 { "requester": "BANKAFRPP" }
 
 ### 4.9 Invalid key presented to the Hash-Link Contract: 400, securities still locked
-POST {{host}}/api/market-dlt/hash-link-contracts/{{dvpA.response.body.$.dvpId}}/execute
+POST {{host}}/api/market-dlt/{{marketA}}/hash-link-contracts/{{dvpA.response.body.$.dvpId}}/execute
 Content-Type: application/json
 
 { "key": "0000000000000000000000000000000000000000000000000000000000000000" }
 
 ### 4.10 Phase 2a — the buyer presents the Execution Key: securities delivered (EXECUTED)
-POST {{host}}/api/market-dlt/hash-link-contracts/{{dvpA.response.body.$.dvpId}}/execute
+POST {{host}}/api/market-dlt/{{marketA}}/hash-link-contracts/{{dvpA.response.body.$.dvpId}}/execute
 Content-Type: application/json
 
 { "key": "{{dvpAPayment.response.body.$.executionKey}}" }
 
 ### Securities positions: BANKBFRPP 900, BANKCDEFF 100
-GET {{host}}/api/market-dlt/holdings/BANKCDEFF
+GET {{host}}/api/market-dlt/{{marketA}}/holdings/BANKCDEFF
 
 ### ---------------------------------------------------------------------
 ### 4a. DvP option A failing: payment refused, then expiry
@@ -197,11 +215,14 @@ Content-Type: application/json
   "buyer": "BANKAFRPP",
   "cashAmount": 100000,
   "cashLeg": "CASH_TOKEN",
+  "marketDltPlatform": "{{marketA}}",
+  "isin": "XS0000000001",
+  "quantity": 10,
   "timeoutSeconds": 30
 }
 
 ### The seller locks the securities
-POST {{host}}/api/market-dlt/hash-link-contracts
+POST {{host}}/api/market-dlt/{{marketA}}/hash-link-contracts
 Content-Type: application/json
 
 {
@@ -242,13 +263,13 @@ Content-Type: application/json
 { "payer": "BANKAFRPP" }
 
 ### The seller presents the Cancellation Key to the Hash-Link Contract: securities returned (CANCELLED)
-POST {{host}}/api/market-dlt/hash-link-contracts/{{dvpAko.response.body.$.dvpId}}/cancel
+POST {{host}}/api/market-dlt/{{marketA}}/hash-link-contracts/{{dvpAko.response.body.$.dvpId}}/cancel
 Content-Type: application/json
 
 { "key": "{{dvpAkoCancellation.response.body.$.key}}" }
 
 ### BANKBFRPP position: the 10 units are available again
-GET {{host}}/api/market-dlt/holdings/BANKBFRPP
+GET {{host}}/api/market-dlt/{{marketA}}/holdings/BANKBFRPP
 
 ### Wallets after DvP A
 GET {{host}}/api/dlt/wallets
@@ -268,11 +289,14 @@ Content-Type: application/json
   "seller": "BANKBFRPP",
   "buyer": "BANKAFRPP",
   "cashAmount": 2000000,
-  "cashLeg": "T2"
+  "cashLeg": "T2",
+  "marketDltPlatform": "{{marketA}}",
+  "isin": "XS0000000001",
+  "quantity": 200
 }
 
 ### 5.2 Phase 1 — securities locked in the Hash-Link Contract
-POST {{host}}/api/market-dlt/hash-link-contracts
+POST {{host}}/api/market-dlt/{{marketA}}/hash-link-contracts
 Content-Type: application/json
 
 {
@@ -307,7 +331,7 @@ Content-Type: application/json
 { "requester": "BANKAFRPP" }
 
 ### 5.7 The buyer presents the Execution Key: securities delivered
-POST {{host}}/api/market-dlt/hash-link-contracts/{{dvpB.response.body.$.dvpId}}/execute
+POST {{host}}/api/market-dlt/{{marketA}}/hash-link-contracts/{{dvpB.response.body.$.dvpId}}/execute
 Content-Type: application/json
 
 { "key": "{{dvpBExecution.response.body.$.key}}" }
@@ -327,11 +351,14 @@ Content-Type: application/json
   "seller": "BANKBFRPP",
   "buyer": "BANKAFRPP",
   "cashAmount": 50000,
-  "cashLeg": "T2"
+  "cashLeg": "T2",
+  "marketDltPlatform": "{{marketA}}",
+  "isin": "XS0000000001",
+  "quantity": 5
 }
 
 ###
-POST {{host}}/api/market-dlt/hash-link-contracts
+POST {{host}}/api/market-dlt/{{marketA}}/hash-link-contracts
 Content-Type: application/json
 
 {
@@ -346,13 +373,13 @@ Content-Type: application/json
 }
 
 ### 6.2 The seller cannot release the securities to themselves: 403
-POST {{host}}/api/market-dlt/hash-link-contracts/{{dvpC.response.body.$.dvpId}}/release-to-seller
+POST {{host}}/api/market-dlt/{{marketA}}/hash-link-contracts/{{dvpC.response.body.$.dvpId}}/release-to-seller
 Content-Type: application/json
 
 { "requester": "BANKBFRPP" }
 
 ### 6.3 The buyer releases the securities back to the seller before the timeout: CANCELLED, BUYER_CONSENT
-POST {{host}}/api/market-dlt/hash-link-contracts/{{dvpC.response.body.$.dvpId}}/release-to-seller
+POST {{host}}/api/market-dlt/{{marketA}}/hash-link-contracts/{{dvpC.response.body.$.dvpId}}/release-to-seller
 Content-Type: application/json
 
 { "requester": "BANKAFRPP" }
@@ -367,11 +394,14 @@ Content-Type: application/json
   "seller": "BANKBFRPP",
   "buyer": "BANKAFRPP",
   "cashAmount": 50000,
-  "cashLeg": "T2"
+  "cashLeg": "T2",
+  "marketDltPlatform": "{{marketA}}",
+  "isin": "XS0000000001",
+  "quantity": 5
 }
 
 ###
-POST {{host}}/api/market-dlt/hash-link-contracts
+POST {{host}}/api/market-dlt/{{marketA}}/hash-link-contracts
 Content-Type: application/json
 
 {
@@ -387,13 +417,13 @@ Content-Type: application/json
 
 ### 6.5 The seller releases the securities to the buyer: EXECUTED, SELLER_CONSENT
 ###     (free delivery: the seller bears the risk of not being paid)
-POST {{host}}/api/market-dlt/hash-link-contracts/{{dvpD.response.body.$.dvpId}}/release-to-buyer
+POST {{host}}/api/market-dlt/{{marketA}}/hash-link-contracts/{{dvpD.response.body.$.dvpId}}/release-to-buyer
 Content-Type: application/json
 
 { "requester": "BANKBFRPP" }
 
 ### Lock refused: insufficient securities position at the seller (409)
-POST {{host}}/api/market-dlt/hash-link-contracts
+POST {{host}}/api/market-dlt/{{marketA}}/hash-link-contracts
 Content-Type: application/json
 
 {
@@ -417,25 +447,116 @@ Content-Type: application/json
 POST {{host}}/api/eii/dvp
 Content-Type: application/json
 
-{ "tradeReference": "TRADE-B-BAD-{{$timestamp}}", "seller": "BANKBFRPP", "buyer": "BANKAFRPP", "cashAmount": 1000, "cashLeg": "T2", "timeoutSeconds": 7200 }
+{ "tradeReference": "TRADE-B-BAD-{{$timestamp}}", "seller": "BANKBFRPP", "buyer": "BANKAFRPP", "cashAmount": 1000, "cashLeg": "T2",
+  "marketDltPlatform": "{{marketA}}", "isin": "XS0000000001", "quantity": 1, "timeoutSeconds": 7200 }
 
-### All DvP instances (Pontes view: cash leg only)
+### All DvP instances (Pontes view: cash leg and reference of the asset leg)
 GET {{host}}/api/eii/dvp
 
 ### Final securities positions
-GET {{host}}/api/market-dlt/holdings/BANKAFRPP
+GET {{host}}/api/market-dlt/{{marketA}}/holdings/BANKAFRPP
 
 ###
-GET {{host}}/api/market-dlt/holdings/BANKCDEFF
+GET {{host}}/api/market-dlt/{{marketA}}/holdings/BANKCDEFF
 
 ###
-GET {{host}}/api/market-dlt/holdings/BANKBFRPP
+GET {{host}}/api/market-dlt/{{marketA}}/holdings/BANKBFRPP
 
 ### Triggers processed by the Trigger Backend (TOKEN_MINT, DVP_CASH_LEG, ...)
 GET {{host}}/api/t2/triggers
 
 ### ---------------------------------------------------------------------
-### 6. Redemption (redeem): BANKCDEFF destroys EUR 500,000 of tokens and gets the CeBM back
+### 7. Second market DLT platform (Appia: multiple interconnected networks)
+###    MDLT-B is run by another market DLT operator: its own participants, securities and Hash-Link Contracts.
+###    Pontes settles its DvPs in the same central bank money. BANKCDEFF holds 500 XS0000000002 on MDLT-B.
+### ---------------------------------------------------------------------
+
+### 7.1 Positions on MDLT-B
+GET {{host}}/api/market-dlt/{{marketB}}/holdings/BANKCDEFF
+
+### 7.2 A security of MDLT-A does not exist on MDLT-B: 409 (insufficient position)
+POST {{host}}/api/market-dlt/{{marketB}}/hash-link-contracts
+Content-Type: application/json
+
+{
+  "dvpId": "dvp-not-on-b",
+  "seller": "BANKBFRPP",
+  "buyer": "BANKAFRPP",
+  "isin": "XS0000000001",
+  "quantity": 1,
+  "executionKeyHash": "{{dvpB.response.body.$.executionKeyHash}}",
+  "cancellationKeyHash": "{{dvpB.response.body.$.cancellationKeyHash}}",
+  "timeout": "{{dvpB.response.body.$.timeout}}"
+}
+
+### 7.3 BANKDDEFF (onboarded on MDLT-A in section 2) is unknown to MDLT-B: 409
+POST {{host}}/api/market-dlt/{{marketB}}/issuances
+Content-Type: application/json
+
+{ "party": "BANKDDEFF", "isin": "XS0000000002", "quantity": 1 }
+
+### 7.4 Nor is it linked to MDLT-B in Pontes: DvP Initialisation refused (400)
+POST {{host}}/api/eii/dvp
+Content-Type: application/json
+
+{ "tradeReference": "TRADE-E-KO-{{$timestamp}}", "seller": "BANKCDEFF", "buyer": "BANKDDEFF", "cashAmount": 1000,
+  "cashLeg": "T2", "marketDltPlatform": "{{marketB}}", "isin": "XS0000000002", "quantity": 1 }
+
+### 7.5 DvP on MDLT-B, option B: BANKCDEFF delivers 50 XS0000000002 to BANKAFRPP against EUR 250,000
+# @name dvpE
+POST {{host}}/api/eii/dvp
+Content-Type: application/json
+
+{
+  "tradeReference": "TRADE-E-{{$timestamp}}",
+  "seller": "BANKCDEFF",
+  "buyer": "BANKAFRPP",
+  "cashAmount": 250000,
+  "cashLeg": "T2",
+  "marketDltPlatform": "{{marketB}}",
+  "isin": "XS0000000002",
+  "quantity": 50
+}
+
+### 7.6 Lock on MDLT-B
+POST {{host}}/api/market-dlt/{{marketB}}/hash-link-contracts
+Content-Type: application/json
+
+{
+  "dvpId": "{{dvpE.response.body.$.dvpId}}",
+  "seller": "BANKCDEFF",
+  "buyer": "BANKAFRPP",
+  "isin": "XS0000000002",
+  "quantity": 50,
+  "executionKeyHash": "{{dvpE.response.body.$.executionKeyHash}}",
+  "cancellationKeyHash": "{{dvpE.response.body.$.cancellationKeyHash}}",
+  "timeout": "{{dvpE.response.body.$.timeout}}"
+}
+
+### 7.7 Payment through T2 (202), then wait for SETTLED
+POST {{host}}/api/eii/dvp/{{dvpE.response.body.$.dvpId}}/payment
+Content-Type: application/json
+
+{ "payer": "BANKAFRPP" }
+
+### 7.8 Reveal Key by the buyer
+# @name dvpEExecution
+POST {{host}}/api/eii/dvp/{{dvpE.response.body.$.dvpId}}/reveal-key
+Content-Type: application/json
+
+{ "requester": "BANKAFRPP" }
+
+### 7.9 Delivery on MDLT-B
+POST {{host}}/api/market-dlt/{{marketB}}/hash-link-contracts/{{dvpE.response.body.$.dvpId}}/execute
+Content-Type: application/json
+
+{ "key": "{{dvpEExecution.response.body.$.key}}" }
+
+### 7.10 BANKAFRPP now holds securities on both platforms, bought with the same central bank money
+GET {{host}}/api/market-dlt/{{marketB}}/holdings/BANKAFRPP
+
+### ---------------------------------------------------------------------
+### 8. Redemption (redeem): BANKCDEFF destroys EUR 500,000 of tokens and gets the CeBM back
 ### ---------------------------------------------------------------------
 POST {{host}}/api/dlt/redeem
 Content-Type: application/json
@@ -443,7 +564,7 @@ Content-Type: application/json
 { "participant": "BANKCDEFF", "amount": 500000 }
 
 ### ---------------------------------------------------------------------
-### 7. DLT integrity
+### 9. DLT integrity
 ### ---------------------------------------------------------------------
 
 ### Transaction ledger (MINT / TRANSFER / BURN)
@@ -453,7 +574,7 @@ GET {{host}}/api/dlt/ledger
 GET {{host}}/api/dlt/ledger/verify
 
 ### ---------------------------------------------------------------------
-### 8. Monitoring
+### 10. Monitoring
 ### ---------------------------------------------------------------------
 
 ### Structure of the bounded contexts (Spring Modulith)
