@@ -1,0 +1,9 @@
+pontes:
+  market-dlt:
+    besu:
+      # Market DLT node (besu-market in docker-compose.yml): a chain distinct from the Eurosystem DLT.
+      rpc-url: http://localhost:8546
+      chain-id: 1338
+      # Development key of the market DLT operator, generated for this POC (no funds needed on a zero-fee
+      # network). Never reuse it outside a local environment.
+      operator-private-key: cce753032cafe278f0cf95391af4de4aeb9c46eae962bedc24e922c605fc709e

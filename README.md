@@ -33,7 +33,9 @@ with a **dual settlement model** for Delivery versus Payment (DvP):
 
 In both cases, the cash leg is finalised in CeBM via T2: cash tokens are backed 1:1 by CeBM
 blocked on an RTGS technical account. The Pontes pilot has been live since 21 September 2026.
-Besu and Canton are cited as illustrative technical choices, which the ECB has not publicly settled on.
+Besu and Canton are cited as illustrative technical choices, which the ECB has not publicly settled on. The
+market DLT can run on its own Besu chain with ERC-3643 securities tokens, the model of SWIAT, one of the
+platforms connected to Pontes at launch (see [Market DLT on Besu](#market-dlt-on-besu-erc-3643)).
 
 Sources: ecb.europa.eu/paym/target/pontes, and the Pontes URD v1.0 (User Requirements Document, ECB)
 for the Hash Link DvP protocol (§4.2):
@@ -51,7 +53,7 @@ internal, and access to them from another module is rejected by `ApplicationModu
 | 01 TARGET Services (RTGS+ESMIG) | `rtgs`      | `RtgsAccounts`, `RtgsTransferSettled`          | `/api/target/accounts`       |
 | 02 T2 interface (Trigger Backend) | `trigger` | `TriggerBackend`, `SettlementTriggerCompleted/Rejected` | `/api/t2/triggers`   |
 | 03 Eurosystem DLT (cash tokens, Besu) | `cashtoken` | `CashTokenLedger`, `CashTokensMinted/Redeemed` | `/api/dlt/...`          |
-| Market DLT (e.g. Canton, simulated) | `marketdlt` | `SecuritiesLedger`, `HashLinkTerms`, `HashLinkContractView` | `/api/market-dlt/...` (including `hash-link-contracts`) |
+| Market DLT (simulated, or Besu + ERC-3643) | `marketdlt` | `SecuritiesLedger`, `HashLinkTerms`, `HashLinkContractView`, `ParticipantView` | `/api/market-dlt/...` (including `participants` and `hash-link-contracts`) |
 | 04 EII · Extended Interoperability Interface | `interop` | `DvpInitialisation`, `DvpView`, `DvpPaymentResult`, `RevealedKey`, `CashLegOption`, `DvpSettled`, `DvpExpired` | `/api/eii/dvp` |
 | (tooling) demo data            | `demo`      | none                                           | none                         |
 
@@ -63,7 +65,7 @@ flowchart LR
     cashtoken["cashtoken<br/>Eurosystem DLT"]
     trigger["trigger<br/>T2 Trigger Backend"]
     rtgs["rtgs<br/>TARGET Services"]
-    marketdlt["marketdlt<br/>Market DLT (simulated Canton)"]
+    marketdlt["marketdlt<br/>Market DLT (simulated or Besu ERC-3643)"]
     demo["demo<br/>demo data"]
 
     interop -->|transfer| cashtoken
@@ -103,9 +105,12 @@ The graph is acyclic: `trigger` does not know its subscribers, which receive the
 DvP follows the Hash Link protocol of the Pontes URD (§4.2). Pontes only knows the cash leg (parties,
 amount, option A or B); the ISIN and the quantity are agreed between the parties and are only known to the
 market DLT. Pontes generates two random 256-bit keys, an **Execution Key** and a **Cancellation Key**,
-and publishes only their SHA-256 hashes. The seller locks its securities on the market DLT in a **Hash-Link
+and publishes only their SHA-256 hashes, computed on the 32 raw bytes of each key so that an EVM contract checks
+them with `sha256(abi.encodePacked(bytes32 key))`. The seller locks its securities on the market DLT in a **Hash-Link
 Contract** (HLC), which is only released upon presentation of a key whose hash matches: the Execution Key
-delivers the securities to the buyer, the Cancellation Key returns them to the seller. Pontes reveals the Execution Key
+delivers the securities to the buyer, the Cancellation Key returns them to the seller. Each party can also give up
+its claim without a key: the seller by releasing the securities to the buyer, the buyer by releasing them back
+to the seller (URD §4.2, cases 1 and 2). Pontes reveals the Execution Key
 only after the cash leg has settled, and the Cancellation Key only after the timeout without payment: the two can
 never both be revealed for the same instance. Atomicity relies on these keys and on the timeout, not
 on central orchestration nor on a transaction spanning both DLTs.
@@ -213,8 +218,25 @@ Before the timeout, or if a payment is settled or in progress (`PAYMENT_PENDING`
 revealed (409). Once the instance is `EXPIRED`, any payment is refused (422). A key whose hash does not
 match is refused by the HLC (400) and the securities remain locked.
 
+### Release by consent (URD cases 1 and 2)
+
+The URD provides two further ways to unwind an HLC, without a key and at any time while it is `LOCKED`:
+
+| Case | Endpoint (`POST /api/market-dlt/hash-link-contracts/{dvpId}/…`) | Only allowed for | Result |
+|------|-----------------------------------------------------------------|------------------|--------|
+| 1    | `release-to-seller` (`requester`)                               | the buyer        | `CANCELLED`, `resolution` `BUYER_CONSENT`: securities returned to the seller |
+| 2    | `release-to-buyer` (`requester`)                                | the seller       | `EXECUTED`, `resolution` `SELLER_CONSENT`: securities delivered to the buyer |
+
+Another party gets 403, an HLC already unwound 409. Each party can only give up its own claim: the seller
+cannot take its securities back without the buyer's consent or the Cancellation Key. The `resolution` field of the
+HLC (`EXECUTION_KEY`, `CANCELLATION_KEY`, `SELLER_CONSENT`, `BUYER_CONSENT`) keeps track of how it was unwound.
+
+Pontes is not informed of these releases: they happen on the market DLT only. A buyer who releases the
+securities while its payment is in progress or settled loses the cash leg, and a seller who delivers before
+payment bears the risk of not being paid. That is the point of a consent: the party gives up its protection.
+
 The securities only leave the seller against the Execution Key, which exists outside Pontes only after finality
-of the cash leg: there is no principal risk.
+of the cash leg, or with the seller's own consent: there is no principal risk.
 
 ## Running the POC
 
@@ -231,6 +253,9 @@ in H2). At startup, `pontes.demo.enabled=true` opens the RTGS accounts `EUROSYST
 bond `XS0000000001` to `BANKBFRPP`. To start empty:
 `mvn spring-boot:run -Dspring-boot.run.arguments=--pontes.demo.enabled=false`.
 
+The demo participants are also onboarded on the market DLT (Identity Registry): only onboarded participants can
+hold, lock or receive securities (`POST /api/market-dlt/participants`).
+
 The [`requests.http`](requests.http) file walks through the full scenario: accounts, mint, Hash Link DvP A
 (success, refused payment, expiry and cancellation) and B (asynchronous T2 payment), redeem, ledger,
 chain verification and `/actuator/modulith`. Identifiers and keys are chained from one request to
@@ -238,15 +263,20 @@ the next through HTTP client global variables.
 
 ### Besu mode
 
-Local Hyperledger Besu node (QBFT, 1 validator) provided by `docker-compose.yml` and `besu/`:
+`docker-compose.yml` starts two local Hyperledger Besu nodes (QBFT, 1 validator each), i.e. two separate chains
+run by two different operators: `besu` (Eurosystem DLT, `chainId` 1337, port 8545, files in `besu/`) and
+`besu-market` (market DLT, `chainId` 1338, port 8546, files in `besu-market/`). Each profile switches one DLT:
 
 ```bash
 docker compose up -d
-mvn spring-boot:run -Dspring-boot.run.profiles=besu
+mvn spring-boot:run -Dspring-boot.run.profiles=besu                 # Eurosystem DLT on Besu
+mvn spring-boot:run -Dspring-boot.run.profiles=market-besu          # market DLT on Besu
+mvn spring-boot:run -Dspring-boot.run.profiles=besu,market-besu     # both
 ```
 
 The `besu` profile replaces the in-memory adapter of the `TokenLedgerPort` port with a web3j adapter
-(configuration in `application-besu.yml`).
+(configuration in `application-besu.yml`). The `market-besu` profile is described in
+[Market DLT on Besu](#market-dlt-on-besu-erc-3643).
 
 Prerequisites: Docker, and JDK 21 in `JAVA_HOME` (`/opt/homebrew/opt/openjdk@21` locally).
 
@@ -352,6 +382,40 @@ curl -s -X POST -H 'Content-Type: application/json' localhost:8545 \
   --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
 ```
 
+### Market DLT on Besu (ERC-3643)
+
+The `market-besu` profile replaces the simulated market DLT with `BesuSecuritiesLedger`, a web3j adapter on the
+`besu-market` node (configuration in `application-market-besu.yml`). It is a chain distinct from the Eurosystem DLT:
+Pontes still never talks to it, the two legs are only linked by the Hash-Link keys.
+
+**Contracts** (`contracts/src/market/`, OpenZeppelin Contracts v5.7, not upgradeable):
+
+- **`IdentityRegistry`**: the addresses onboarded by the market DLT operator (KYC done off-chain). Simplified
+  compared with T-REX: no ONCHAINID, no claims, no trusted issuers, no investor country.
+- **`SecurityToken`**: one token per ISIN (0 decimals), following the core of **ERC-3643**. Only verified
+  addresses receive the token. `AGENT_ROLE` holders mint, burn, pause, freeze an address
+  (`setAddressFrozen`) or part of a balance (`freezePartialTokens` / `unfreezePartialTokens`) and force
+  transfers (`forcedTransfer`, which unfreezes as needed, ignores pause and freezes, but still requires a
+  verified receiver). Holders only transfer their free balance. Not implemented: modular compliance,
+  ONCHAINID, recovery and batch functions.
+- **`HashLinkRegistry`**: the Hash-Link Contracts, indexed by `keccak256(dvpId)`. It is an agent of every
+  listed token: `lock` freezes the seller's securities, which stay registered with the seller until delivery;
+  delivery uses `forcedTransfer`. It implements the four cases of the URD: `execute` (Execution Key, at any
+  time), `cancel` (Cancellation Key, only once `block.timestamp` reaches the timeout), `releaseToBuyer`
+  (signed by the seller) and `releaseToSeller` (signed by the buyer). Only tokens listed by the operator can
+  be locked, and the seller and the buyer must be verified.
+
+**Accounts and signatures.** The market DLT operator (dedicated development key) deploys the registries at
+startup, onboards the participants and deploys, lists and mints a token on the first issuance of an ISIN.
+Participants sign their own transactions: the seller signs `lock`, each party signs its consent, so a
+consent is an on-chain signature here. Their keys are derived from their identifier
+(`keccak256("pontes:market-dlt:participant:<BIC>")`) and held by the application, like a custodial wallet.
+Presenting a key needs no identity: the operator submits it on behalf of the party (URD §4.2, footnote 8).
+
+**Behaviour.** The adapter translates the contract errors into the same business exceptions as the simulated
+market DLT: 400 (invalid key or terms), 403 (consent by another party), 409 (position, onboarding, timeout,
+HLC already unwound). The registries are redeployed at each startup, consistent with the in-memory database.
+
 ## Tests
 
 ```bash
@@ -364,10 +428,15 @@ The tests need neither Docker nor Besu: they use the in-memory adapter.
 |--------------------------------------|------------------------------------------------------------------------------------------|
 | `ModularityTests`                    | `ApplicationModules.verify()` and generation of the documentation in `target/spring-modulith-docs` (C4 PlantUML, module canvases, aggregated document). |
 | `CashTokenIntegrationTests`          | Mint (RTGS debited, technical account credited, wallet credited, chain verified), mint rejected for lack of funds, redeem, redeem beyond the balance. |
-| `DvpSettlementIntegrationTests`      | Hash Link option A and B: success with Execution Key, refused payment then retry, expiry with Cancellation Key, invalid key refused by the HLC, third party refused (403), idempotency on `tradeReference`. |
+| `DvpSettlementIntegrationTests`      | Hash Link option A and B: success with Execution Key, refused payment then retry, expiry with Cancellation Key, invalid key refused by the HLC, Cancellation Key refused before the timeout, release by consent of the seller or the buyer (other parties refused with 403), onboarding required to hold or receive securities, third party refused (403), idempotency on `tradeReference`. |
 | `DemoDataIntegrationTests`           | Data created by the seeder.                                                              |
 | `ApiGatewayWebTests`                 | MockMvc: end-to-end Hash Link DvP option B (initialisation, HLC, payment, reveal-key, 403 for a third party, execute), payment refused with 422, validation 400, business 400, 404, `/actuator/modulith`. |
 | `trigger.TriggerBackendModuleTests`  | `@ApplicationModuleTest` (`trigger` module and its `rtgs` dependency only) with the `Scenario` API to wait for published events. |
+
+The Foundry tests (`./contracts/build.sh`) also cover the market DLT contracts:
+`contracts/test/SecurityToken.t.sol` (identity checks, agent roles, partial and address freezes, pause, forced
+transfer) and `contracts/test/HashLinkRegistry.t.sol` (the four release cases, timeout, invalid keys, free
+position, verified buyer, listed token, single use of a `dvpId`).
 
 For asynchronous behaviour, the tests use Awaitility or `Scenario`. Isolation relies on participants,
 ISINs and references that are unique per test. `src/test/resources/config/application.yml` gives each test Spring
@@ -375,15 +444,21 @@ context its own H2 database, which avoids interference between cached contexts.
 
 ## POC limitations
 
-- **Partial Hash Link.** Only the key-based paths are implemented: no release of the securities by
-  signed consent of the seller or the buyer as provided for by the URD. The simulated HLC records the timeout but
-  does not check it: it accepts a valid key at any time, and Pontes alone guarantees that only one
-  of the two keys is revealed. Expiry is only detected on demand (payment or seller's Reveal Key),
-  without a scheduled job or notification of the parties.
+- **Hash Link.** The four release paths of the URD are implemented. On the simulated market DLT, the consent of
+  a party is a declarative `requester` field; on the Besu market DLT, it is a transaction signed with a key
+  held by the application for the party. Both HLCs refuse the Cancellation Key before the timeout (to the
+  second) and accept the Execution Key at any time. Expiry is only detected on demand at Pontes (payment or
+  seller's Reveal Key), without a scheduled job or notification of the parties.
+- **ERC-3643 subset (Besu market DLT).** Simplified Identity Registry (no ONCHAINID or claims), no modular
+  compliance, no recovery. If the operator removes the buyer's identity after the lock, delivery fails
+  (`forcedTransfer` requires a verified receiver) while Pontes will never reveal the Cancellation Key of a
+  paid DvP: the securities stay frozen until the operator steps in. A participant could also take a `dvpId`
+  first with its own securities, which blocks the real seller's lock; the buyer detects it when checking the HLC.
 - **No ESMIG authentication.** The `seller`, `payer` and `requester` fields are declarative: the identity
   is a plain BIC supplied by the caller, with no certificate or signature. The check "only the buyer pays,
-  only the parties obtain a key" (403) therefore only holds for an honest caller. Likewise, the market
-  DLT does not verify the identity of the caller that locks, executes or cancels an HLC.
+  only the parties obtain a key" (403) therefore only holds for an honest caller. Likewise, the simulated
+  market DLT does not verify the identity of the caller that locks an HLC or consents to its release; the Besu
+  market DLT does, but signs for any identifier supplied by the caller.
 - **Keys in clear text.** Pontes stores the keys in the H2 database without encryption or HSM, and reveals them in clear text in
   the REST responses.
 - **Simulations.** The RTGS, ESMIG, the Trigger Backend and the market DLT are highly simplified
@@ -400,8 +475,8 @@ context its own H2 database, which avoids interference between cached contexts.
 - **State across restarts (Besu mode).** If the application is attached to an existing proxy
   (`contract-address`), the chain keeps the tokens while the H2 database (RTGS, DvP instances) starts from scratch.
   The equality between the outstanding amount and the technical account can then no longer be verified.
-- **Besu mode.** It depends on a local node and a public development key, never to be used
-  outside a development workstation.
+- **Besu mode.** It depends on local nodes, on a public development key (Eurosystem operator) and on keys
+  derived from public identifiers (market DLT participants), never to be used outside a development workstation.
 
 ## License
 

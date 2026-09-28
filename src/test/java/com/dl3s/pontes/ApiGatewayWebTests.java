@@ -38,6 +38,13 @@ class ApiGatewayWebTests {
         String isin = unique("XS");
         openAccount(seller, "0");
         openAccount(buyer, "500000");
+        for (String party : new String[] {seller, buyer}) {
+            mvc.perform(post("/api/market-dlt/participants").contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"party":"%s"}""".formatted(party)))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.party").value(party));
+        }
         mvc.perform(post("/api/market-dlt/issuances").contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"party":"%s","isin":"%s","quantity":50}""".formatted(seller, isin)))

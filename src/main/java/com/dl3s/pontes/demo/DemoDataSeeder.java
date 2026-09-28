@@ -45,6 +45,8 @@ class DemoDataSeeder implements ApplicationRunner {
         openIfAbsent("BANKAFRPP", "Bank A", new BigDecimal("10000000"));
         openIfAbsent("BANKCDEFF", "Bank C", new BigDecimal("10000000"));
         openIfAbsent("BANKBFRPP", "Bank B", new BigDecimal("5000000"));
+        // Onboarding by the market DLT operator (Identity Registry): only verified participants hold securities.
+        List.of("BANKAFRPP", "BANKBFRPP", "BANKCDEFF").forEach(securities::onboard);
 
         boolean alreadyIssued = securities.holdingsOf("BANKBFRPP").stream()
                 .anyMatch(h -> h.isin().equals(DEMO_ISIN));

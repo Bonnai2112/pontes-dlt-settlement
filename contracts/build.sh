@@ -8,8 +8,10 @@ $FORGE build
 $FORGE test -vv
 TARGET=../src/main/resources/contracts
 mkdir -p "$TARGET"
-# V1 implementation + ERC-1967 proxy: the Java adapter deploys the former behind the latter.
-for CONTRACT in EuroCashToken:EuroCashToken ERC1967Proxy:ERC1967Proxy; do
+# Eurosystem DLT: V1 implementation + ERC-1967 proxy, the Java adapter deploys the former behind the latter.
+# Market DLT: Identity Registry, one ERC-3643 token per ISIN and the Hash-Link Contract registry.
+for CONTRACT in EuroCashToken:EuroCashToken ERC1967Proxy:ERC1967Proxy IdentityRegistry:IdentityRegistry \
+                SecurityToken:SecurityToken HashLinkRegistry:HashLinkRegistry; do
   FILE=${CONTRACT%%:*}; NAME=${CONTRACT##*:}
   python3 -c "import json; a=json.load(open('out/$FILE.sol/$NAME.json')); open('$TARGET/$NAME.bin','w').write(a['bytecode']['object'].removeprefix('0x')); json.dump(a['abi'], open('$TARGET/$NAME.abi.json','w'))"
 done
