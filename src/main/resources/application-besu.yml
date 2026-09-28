@@ -1,0 +1,9 @@
+pontes:
+  besu:
+    rpc-url: http://localhost:8545
+    chain-id: 1337
+    # Public development key shipped with Besu (pre-funded account in besu/genesis.json).
+    # Never reuse it outside a local environment.
+    operator-private-key: 8f2a55949038a9610f50fb23b5883af3b4ecb3c3bb792cbcefbd1542c692be63
+    # ERC-1967 proxy address (stable across upgrades); empty = deploy implementation + proxy at startup.
+    contract-address:

@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: pontes-poc
+  datasource:
+    url: jdbc:h2:mem:pontes;DB_CLOSE_DELAY=-1
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+  mvc:
+    problemdetails:
+      enabled: true
+  modulith:
+    events:
+      republish-outstanding-events-on-restart: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,modulith
+
+pontes:
+  # RTGS technical account backing the cash tokens issued on the Eurosystem DLT
+  dlt-technical-account: EUROSYSTEM-DLT-TA
+  demo:
+    enabled: true
+  # Hash-Link protocol timeout thresholds (configured by the Pontes Operator)
+  hash-link:
+    default-timeout: PT10M
+    max-timeout: PT1H

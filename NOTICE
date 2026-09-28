@@ -1,0 +1,17 @@
+pontes-dlt-settlement
+Copyright 2026 the pontes-dlt-settlement contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Disclaimer: this is an independent, educational proof of concept inspired by the public
+documentation of the Eurosystem's Pontes initiative. It is not affiliated with, endorsed by,
+or connected to the European Central Bank, the Eurosystem or any National Central Bank.
+"TARGET", "T2", "ESMIG" and "Pontes" are used only to describe the concepts being modelled.
+All banks, BICs and ISINs used in the demo data are fictional.
+
+This product includes or downloads third-party software:
+- OpenZeppelin Contracts and Contracts Upgradeable (MIT License)
+- forge-std (MIT / Apache-2.0)
+- Spring Boot, Spring Modulith (Apache License 2.0)
+- web3j (Apache License 2.0)
+- Hyperledger Besu, used as a Docker image (Apache License 2.0)

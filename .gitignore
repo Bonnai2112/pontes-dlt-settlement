@@ -1,0 +1,12 @@
+target/
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Local tooling
+*.log
+
+# Local-only presentation files (only "POC DL3S v2.pdf" is published)
+POC DL3S.pdf
+POC DL3S.pptx

@@ -1,0 +1,12 @@
+# Test overrides, merged with src/main/resources/application.yml
+# (classpath:/config/application.yml takes precedence over classpath:/application.yml).
+spring:
+  datasource:
+    # A separate H2 database per Spring context: the contexts cached by the test framework
+    # (SpringBootTest, MockMvc, ApplicationModuleTest) do not step on each other with create-drop.
+    url: jdbc:h2:mem:pontes-test-${random.uuid};DB_CLOSE_DELAY=-1
+
+pontes:
+  demo:
+    # Left enabled: the tests check the seeder and only use unique participants.
+    enabled: true

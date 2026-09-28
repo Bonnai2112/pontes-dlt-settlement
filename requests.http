@@ -1,0 +1,375 @@
+### =====================================================================
+### POC Pontes — full demo scenario (IntelliJ HTTP client / VS Code REST Client)
+### Prerequisite: application running (mvn spring-boot:run) with pontes.demo.enabled=true:
+###   RTGS accounts EUROSYSTEM-DLT-TA (0), BANKAFRPP (10 M), BANKCDEFF (10 M), BANKBFRPP (5 M)
+###   digital bond XS0000000001: 1,000 units held by BANKBFRPP (market DLT)
+### =====================================================================
+@host = http://localhost:8080
+
+### ---------------------------------------------------------------------
+### 1. TARGET Services (RTGS / ESMIG): central bank money accounts
+### ---------------------------------------------------------------------
+
+### List of RTGS DCAs
+GET {{host}}/api/target/accounts
+
+### Technical account backing the cash tokens
+GET {{host}}/api/target/accounts/EUROSYSTEM-DLT-TA
+
+### Open an additional account (409 if already open)
+POST {{host}}/api/target/accounts
+Content-Type: application/json
+
+{ "accountId": "DEUTDEFF", "owner": "Deutsche Bank", "initialBalance": 3000000 }
+
+### ---------------------------------------------------------------------
+### 2. Market DLT (simulated Canton): securities positions
+### ---------------------------------------------------------------------
+
+### Position of BANKBFRPP (seller of the digital bond)
+GET {{host}}/api/market-dlt/holdings/BANKBFRPP
+
+### (optional) Primary issuance of another tokenised security
+POST {{host}}/api/market-dlt/issuances
+Content-Type: application/json
+
+{ "party": "BANKBFRPP", "isin": "XS0000000002", "quantity": 500 }
+
+### ---------------------------------------------------------------------
+### 3. Eurosystem DLT: cash token issuance (mint) by BANKCDEFF
+###    RTGS BANKCDEFF → EUROSYSTEM-DLT-TA via the Trigger Backend, then tokens issued (asynchronous)
+### ---------------------------------------------------------------------
+
+### Mint request: EUR 2,000,000 of cash tokens
+# @name mint
+POST {{host}}/api/dlt/mint
+Content-Type: application/json
+
+{ "participant": "BANKCDEFF", "amount": 2000000 }
+
+### Operation tracking (PENDING_RTGS → COMPLETED)
+GET {{host}}/api/dlt/operations/mint-0cd41f71-9a74-451d-bb0a-da81584740ad
+
+### BANKCDEFF wallet on the DLT
+GET {{host}}/api/dlt/wallets/BANKCDEFF
+
+### RTGS: BANKCDEFF debited, technical account credited
+GET {{host}}/api/target/accounts
+
+### Mint rejected: insufficient RTGS funds (operation REJECTED)
+POST {{host}}/api/dlt/mint
+Content-Type: application/json
+
+{ "participant": "BANKBFRPP", "amount": 999000000 }
+
+###
+GET {{host}}/api/dlt/operations/mint-12ecdd20-5afb-40d9-b732-01feb6bd3338
+
+### ---------------------------------------------------------------------
+### 4. DvP option A (CASH_TOKEN) — Hash Link protocol (Pontes URD v1.0, §4.2)
+###    BANKBFRPP delivers 100 XS0000000001 to BANKCDEFF against EUR 1,000,000 of cash tokens
+###    Pontes only knows the cash leg; the ISIN and quantity are only sent to the market DLT.
+###    The seller / payer / requester fields stand in for the identity authenticated by ESMIG.
+### ---------------------------------------------------------------------
+
+### 4.1 Phase 1 — the seller initialises the DvP: Pontes generates the keys and returns only their hashes (201)
+###     timeoutSeconds optional: default 600 s (pontes.hash-link.default-timeout), maximum 3,600 s
+POST {{host}}/api/eii/dvp
+Content-Type: application/json
+
+{
+  "tradeReference": "TRADE-A-0001",
+  "seller": "BANKBFRPP",
+  "buyer": "BANKCDEFF",
+  "cashAmount": 1000000,
+  "cashLeg": "CASH_TOKEN"
+}
+
+### 4.2 Replay the same tradeReference: idempotent (same dvpId, same hashes, no new instance)
+POST {{host}}/api/eii/dvp
+Content-Type: application/json
+
+{
+  "tradeReference": "TRADE-A-0001",
+  "seller": "BANKBFRPP",
+  "buyer": "BANKCDEFF",
+  "cashAmount": 1000000,
+  "cashLeg": "CASH_TOKEN"
+}
+
+### 4.3 Phase 1 — the seller locks its securities on the market DLT in a Hash-Link Contract (201)
+###     409 if the available position is insufficient
+POST {{host}}/api/market-dlt/hash-link-contracts
+Content-Type: application/json
+
+{
+  "dvpId": "dvp-28fc06b9-a4a1-4d8e-825b-d2a74b15457e",
+  "seller": "BANKBFRPP",
+  "buyer": "BANKCDEFF",
+  "isin": "XS0000000001",
+  "quantity": 100,
+  "executionKeyHash": "ac28e12f32bfbc53bb54867cd32922d106051ea33dd60872b8395b780f476290",
+  "cancellationKeyHash": "feb60dee43360b7b7ec688d079c3024ba6dd72a10a492fd435f804476e97bbef",
+  "timeout": "2026-09-28T13:56:08.716430Z"
+}
+
+### 4.4 Phase 1 — the buyer checks the parameters (Initialisation Query): status INITIALISED
+GET {{host}}/api/eii/dvp/dvp-28fc06b9-a4a1-4d8e-825b-d2a74b15457e
+
+### ... and the Hash-Link Contract on the market DLT: same hashes, status LOCKED
+GET {{host}}/api/market-dlt/hash-link-contracts/dvp-28fc06b9-a4a1-4d8e-825b-d2a74b15457e
+
+### 4.5 The Execution Key is not revealed before payment: 409
+POST {{host}}/api/eii/dvp/dvp-28fc06b9-a4a1-4d8e-825b-d2a74b15457e/reveal-key
+Content-Type: application/json
+
+{ "requester": "BANKCDEFF" }
+
+### 4.6 Phase 2a — the buyer pays: 200, paymentStatus SETTLED, Execution Key in the response
+###     Payment reference <dvpId>-P1 (one per attempt, idempotent on the DLT side)
+POST {{host}}/api/eii/dvp/dvp-28fc06b9-a4a1-4d8e-825b-d2a74b15457e/payment
+Content-Type: application/json
+
+{ "payer": "BANKCDEFF" }
+
+### 4.7 Reveal Key: the buyer can also obtain the Execution Key afterwards (keyType EXECUTION)
+POST {{host}}/api/eii/dvp/dvp-28fc06b9-a4a1-4d8e-825b-d2a74b15457e/reveal-key
+Content-Type: application/json
+
+{ "requester": "BANKCDEFF" }
+
+### 4.8 A third party cannot obtain any key: 403
+POST {{host}}/api/eii/dvp/dvp-28fc06b9-a4a1-4d8e-825b-d2a74b15457e/reveal-key
+Content-Type: application/json
+
+{ "requester": "BANKAFRPP" }
+
+### 4.9 Invalid key presented to the Hash-Link Contract: 400, securities still locked
+POST {{host}}/api/market-dlt/hash-link-contracts/dvp-28fc06b9-a4a1-4d8e-825b-d2a74b15457e/execute
+Content-Type: application/json
+
+{ "key": "feb60dee43360b7b7ec688d079c3024ba6dd72a10a492fd435f804476e97bbef" }
+
+### 4.10 Phase 2a — the buyer presents the Execution Key: securities delivered (EXECUTED)
+POST {{host}}/api/market-dlt/hash-link-contracts/dvp-28fc06b9-a4a1-4d8e-825b-d2a74b15457e/execute
+Content-Type: application/json
+
+{ "key": "15d5794dc29c4bb3527aa5b1230e7e229282b46ed2f718e5e63405ef062a94a7" }
+
+### Securities positions: BANKBFRPP 900, BANKCDEFF 100
+GET {{host}}/api/market-dlt/holdings/BANKCDEFF
+
+### ---------------------------------------------------------------------
+### 4a. DvP option A failing: payment refused, then expiry
+###    BANKBFRPP sells 10 XS0000000001 to BANKAFRPP, which has no cash tokens. Short timeout (30 s).
+### ---------------------------------------------------------------------
+
+### Initialisation with timeoutSeconds = 30
+POST {{host}}/api/eii/dvp
+Content-Type: application/json
+
+{
+  "tradeReference": "TRADE-A-0002",
+  "seller": "BANKBFRPP",
+  "buyer": "BANKAFRPP",
+  "cashAmount": 100000,
+  "cashLeg": "CASH_TOKEN",
+  "timeoutSeconds": 30
+}
+
+> {%
+    client.global.set("dvpAko", response.body.dvpId);
+    client.global.set("dvpAkoExecHash", response.body.executionKeyHash);
+    client.global.set("dvpAkoCancelHash", response.body.cancellationKeyHash);
+    client.global.set("dvpAkoTimeout", response.body.timeout);
+%}
+
+### The seller locks the securities
+POST {{host}}/api/market-dlt/hash-link-contracts
+Content-Type: application/json
+
+{
+  "dvpId": "{{dvpAko}}",
+  "seller": "BANKBFRPP",
+  "buyer": "BANKAFRPP",
+  "isin": "XS0000000001",
+  "quantity": 10,
+  "executionKeyHash": "{{dvpAkoExecHash}}",
+  "cancellationKeyHash": "{{dvpAkoCancelHash}}",
+  "timeout": "{{dvpAkoTimeout}}"
+}
+
+### Payment refused: 422, paymentStatus REJECTED (insufficient tokens), no key revealed.
+### The instance stays INITIALISED: the buyer can retry (reference <dvpId>-P2) until the timeout.
+POST {{host}}/api/eii/dvp/{{dvpAko}}/payment
+Content-Type: application/json
+
+{ "payer": "BANKAFRPP" }
+
+### The seller requests the Cancellation Key before the timeout: 409
+POST {{host}}/api/eii/dvp/{{dvpAko}}/reveal-key
+Content-Type: application/json
+
+{ "requester": "BANKBFRPP" }
+
+### Wait 30 s, then: the seller obtains the Cancellation Key (keyType CANCELLATION), DvP EXPIRED
+POST {{host}}/api/eii/dvp/{{dvpAko}}/reveal-key
+Content-Type: application/json
+
+{ "requester": "BANKBFRPP" }
+
+> {% client.global.set("dvpAkoCancelKey", response.body.key); %}
+
+### Payment after the timeout: 422 REJECTED
+POST {{host}}/api/eii/dvp/{{dvpAko}}/payment
+Content-Type: application/json
+
+{ "payer": "BANKAFRPP" }
+
+### The seller presents the Cancellation Key to the Hash-Link Contract: securities returned (CANCELLED)
+POST {{host}}/api/market-dlt/hash-link-contracts/{{dvpAko}}/cancel
+Content-Type: application/json
+
+{ "key": "{{dvpAkoCancelKey}}" }
+
+### BANKBFRPP position: the 10 units are available again
+GET {{host}}/api/market-dlt/holdings/BANKBFRPP
+
+### Wallets after DvP A
+GET {{host}}/api/dlt/wallets
+
+### ---------------------------------------------------------------------
+### 5. DvP option B (T2) — cash leg settled directly in the RTGS, asynchronous finality
+###    BANKBFRPP delivers 200 XS0000000001 to BANKAFRPP against EUR 2,000,000 in CeBM
+### ---------------------------------------------------------------------
+
+### 5.1 Phase 1 — initialisation by the seller (201)
+POST {{host}}/api/eii/dvp
+Content-Type: application/json
+
+{
+  "tradeReference": "TRADE-B-0001",
+  "seller": "BANKBFRPP",
+  "buyer": "BANKAFRPP",
+  "cashAmount": 2000000,
+  "cashLeg": "T2"
+}
+
+> {%
+    client.global.set("dvpB", response.body.dvpId);
+    client.global.set("dvpBExecHash", response.body.executionKeyHash);
+    client.global.set("dvpBCancelHash", response.body.cancellationKeyHash);
+    client.global.set("dvpBTimeout", response.body.timeout);
+%}
+
+### 5.2 Phase 1 — securities locked in the Hash-Link Contract
+POST {{host}}/api/market-dlt/hash-link-contracts
+Content-Type: application/json
+
+{
+  "dvpId": "{{dvpB}}",
+  "seller": "BANKBFRPP",
+  "buyer": "BANKAFRPP",
+  "isin": "XS0000000001",
+  "quantity": 200,
+  "executionKeyHash": "{{dvpBExecHash}}",
+  "cancellationKeyHash": "{{dvpBCancelHash}}",
+  "timeout": "{{dvpBTimeout}}"
+}
+
+### 5.3 Initialisation Query by the buyer
+GET {{host}}/api/eii/dvp/{{dvpB}}
+
+### 5.4 Phase 2a — payment: 202, paymentStatus PENDING (DVP_CASH_LEG trigger sent to T2)
+POST {{host}}/api/eii/dvp/{{dvpB}}/payment
+Content-Type: application/json
+
+{ "payer": "BANKAFRPP" }
+
+### 5.5 Tracking: PAYMENT_PENDING → SETTLED on T2 finality
+###     (if T2 rejects the payment, the instance goes back to INITIALISED with lastRejectionReason)
+GET {{host}}/api/eii/dvp/{{dvpB}}
+
+### 5.6 Reveal Key by the buyer once SETTLED (409 while PAYMENT_PENDING)
+POST {{host}}/api/eii/dvp/{{dvpB}}/reveal-key
+Content-Type: application/json
+
+{ "requester": "BANKAFRPP" }
+
+> {% client.global.set("dvpBExecKey", response.body.key); %}
+
+### 5.7 The buyer presents the Execution Key: securities delivered
+POST {{host}}/api/market-dlt/hash-link-contracts/{{dvpB}}/execute
+Content-Type: application/json
+
+{ "key": "{{dvpBExecKey}}" }
+
+### Lock refused: insufficient securities position at the seller (409)
+POST {{host}}/api/market-dlt/hash-link-contracts
+Content-Type: application/json
+
+{
+  "dvpId": "dvp-unknown",
+  "seller": "BANKBFRPP",
+  "buyer": "BANKAFRPP",
+  "isin": "XS0000000001",
+  "quantity": 1000000,
+  "executionKeyHash": "{{dvpBExecHash}}",
+  "cancellationKeyHash": "{{dvpBCancelHash}}",
+  "timeout": "{{dvpBTimeout}}"
+}
+
+### Invalid initialisation: 400 (Problem Details)
+POST {{host}}/api/eii/dvp
+Content-Type: application/json
+
+{ "tradeReference": "", "seller": "BANKBFRPP", "buyer": "BANKAFRPP", "cashAmount": 0, "cashLeg": "T2" }
+
+### Timeout out of bounds (> 3,600 s): 400
+POST {{host}}/api/eii/dvp
+Content-Type: application/json
+
+{ "tradeReference": "TRADE-B-9999", "seller": "BANKBFRPP", "buyer": "BANKAFRPP", "cashAmount": 1000, "cashLeg": "T2", "timeoutSeconds": 7200 }
+
+### All DvP instances (Pontes view: cash leg only)
+GET {{host}}/api/eii/dvp
+
+### Final securities positions
+GET {{host}}/api/market-dlt/holdings/BANKAFRPP
+
+###
+GET {{host}}/api/market-dlt/holdings/BANKCDEFF
+
+###
+GET {{host}}/api/market-dlt/holdings/BANKBFRPP
+
+### Triggers processed by the Trigger Backend (TOKEN_MINT, DVP_CASH_LEG, ...)
+GET {{host}}/api/t2/triggers
+
+### ---------------------------------------------------------------------
+### 6. Redemption (redeem): BANKCDEFF destroys EUR 500,000 of tokens and gets the CeBM back
+### ---------------------------------------------------------------------
+POST {{host}}/api/dlt/redeem
+Content-Type: application/json
+
+{ "participant": "BANKCDEFF", "amount": 500000 }
+
+### ---------------------------------------------------------------------
+### 7. DLT integrity
+### ---------------------------------------------------------------------
+
+### Transaction ledger (MINT / TRANSFER / BURN)
+GET {{host}}/api/dlt/ledger
+
+### Verification: valid chain and tokensInCirculation = balance of the EUROSYSTEM-DLT-TA account
+GET {{host}}/api/dlt/ledger/verify
+
+### ---------------------------------------------------------------------
+### 8. Monitoring
+### ---------------------------------------------------------------------
+
+### Structure of the bounded contexts (Spring Modulith)
+GET {{host}}/actuator/modulith
+
+###
+GET {{host}}/actuator/health
