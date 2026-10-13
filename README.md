@@ -1,5 +1,3 @@
-🇫🇷 Version française : [README.fr.md](README.fr.md)
-
 [![CI](https://github.com/Bonnai2112/pontes-dlt-settlement/actions/workflows/ci.yml/badge.svg)](https://github.com/Bonnai2112/pontes-dlt-settlement/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
@@ -43,6 +41,71 @@ Sources: ecb.europa.eu/paym/target/pontes, and the Pontes URD v1.0 (User Require
 for the Hash Link DvP protocol (§4.2):
 <https://www.ecb.europa.eu/paym/target/target-professional-use-documents-links/pontes/shared/pdf/ecb.pontes260417_urd1.en.pdf>
 (see also `POC DL3S v2.pdf`).
+
+## Global architecture
+
+Pontes sits between the market side and TARGET. Participants and market DLT operators reach it through a single
+access point, the EII; the T2 interface turns on-chain payment instructions into RTGS settlements. Market DLT
+platforms stay **outside** Pontes: no component connects them. The parties carry the Hash-Link hashes and keys from
+one side to the other.
+
+```mermaid
+flowchart LR
+    subgraph market["Market side"]
+        parties["Participants (BIC)<br/>Market DLT operators"]
+    end
+    subgraph pontes["Pontes (Eurosystem)"]
+        eii["04 EII · Extended Interoperability Interface<br/><code>interop</code>"]
+        dlt["03 Eurosystem DLT · cash tokens<br/><code>cashtoken</code>"]
+        t2i["02 T2 interface · Trigger Backend<br/><code>trigger</code>"]
+    end
+    subgraph target["TARGET Services"]
+        rtgs["01 T2 RTGS / CLM via ESMIG<br/><code>rtgs</code>"]
+    end
+    subgraph mdlt["Market DLT platforms (outside Pontes)"]
+        a["MDLT-A<br/>securities + Hash-Link Contracts"]
+        b["MDLT-B<br/>securities + Hash-Link Contracts"]
+    end
+
+    parties -->|"A2A REST: DvP initialisation, payment, reveal key"| eii
+    eii -->|"option A: cash token transfer"| dlt
+    eii -->|"option B: direct T2 settlement"| t2i
+    dlt -->|"funding / defunding"| t2i
+    t2i -->|"settlement orders, finality"| rtgs
+    parties -->|"lock with the hashes, unlock with the revealed key"| a
+    parties --> b
+```
+
+In the POC, everything except the Besu chains runs in a single Spring Boot application. The `marketdlt` module
+lives in the same JVM for convenience, but is treated as an external system: no Pontes module depends on it.
+
+```mermaid
+flowchart TB
+    client["HTTP client<br/>requests.http, tests"]
+    subgraph app["Spring Boot application, port 8080 (modular monolith)"]
+        direction LR
+        interop["interop"] --- cashtoken["cashtoken"] --- trigger["trigger"] --- rtgs["rtgs"]
+        marketdlt["marketdlt"]
+        demo["demo"]
+        h2[("H2 in memory")]
+    end
+    besu["besu :8545<br/>Eurosystem DLT, chainId 1337<br/>EuroCashToken behind a UUPS proxy"]
+    ma["besu-market-a :8546<br/>MDLT-A, chainId 1338<br/>IdentityRegistry, SecurityToken, HashLinkRegistry"]
+    mb["besu-market-b :8547<br/>MDLT-B, chainId 1339<br/>same contracts"]
+
+    client -->|"REST"| app
+    cashtoken -->|"web3j, profile besu"| besu
+    marketdlt -->|"web3j, profile market-besu"| ma
+    marketdlt -->|"web3j, profile market-besu"| mb
+```
+
+| Component | Default mode | Besu mode | Limits |
+|---|---|---|---|
+| Eurosystem DLT (`cashtoken`) | Hash-chained ledger in H2 | `EuroCashToken` on `besu` (profile `besu`) | One validator, one operator key signing everything |
+| Market DLT platforms (`marketdlt`) | Simulated in H2 | ERC-3643 tokens and `HashLinkRegistry` on their own chains (profile `market-besu`) | Custodial participant keys held by the application |
+| T2 interface and Trigger (`trigger`) | Simulated in process | Same | No ISO 20022 messages, no NRO signatures |
+| TARGET RTGS and ESMIG (`rtgs`) | Simulated in process | Same | No NSP, no mTLS, single technical account |
+| EII (`interop`) | REST API without authentication | Same | Identity declared in the request (`seller`, `payer`, `requester`) |
 
 ## Mapping of Pontes building blocks ↔ modules
 
