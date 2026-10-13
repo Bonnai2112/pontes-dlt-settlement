@@ -57,14 +57,20 @@ flowchart LR
     subgraph pontes["Pontes (Eurosystem)"]
         eii["04 EII · Extended Interoperability Interface<br/><code>interop</code>"]
         dlt["03 Eurosystem DLT · cash tokens<br/><code>cashtoken</code>"]
-        t2i["02 T2 interface · Trigger Backend<br/><code>trigger</code>"]
+        t2i["02 T2 interface · Trigger Backend<br/><code>trigger</code> (simulated)"]
     end
     subgraph target["TARGET Services"]
-        rtgs["01 T2 RTGS / CLM via ESMIG<br/><code>rtgs</code>"]
+        rtgs["01 T2 RTGS / CLM via ESMIG<br/><code>rtgs</code> (simulated)"]
     end
     subgraph mdlt["Market DLT platforms (outside Pontes)"]
         a["MDLT-A<br/>securities + Hash-Link Contracts"]
         b["MDLT-B<br/>securities + Hash-Link Contracts"]
+    end
+    subgraph legend["Legend"]
+        direction TB
+        l1["Implemented"]:::implemented
+        l2["Simulated by default,<br/>real Besu chain with a profile"]:::switchable
+        l3["Simulated"]:::simulated
     end
 
     parties -->|"A2A REST: DvP initialisation, payment, reveal key"| eii
@@ -74,29 +80,51 @@ flowchart LR
     t2i -->|"settlement orders, finality"| rtgs
     parties -->|"lock with the hashes, unlock with the revealed key"| a
     parties --> b
+
+    class eii implemented
+    class dlt,a,b switchable
+    class t2i,rtgs simulated
+    classDef implemented fill:#d4edda,stroke:#2e7d32,stroke-width:2px,color:#000
+    classDef switchable fill:#fff3cd,stroke:#b8860b,stroke-width:2px,stroke-dasharray:6 3,color:#000
+    classDef simulated fill:#e9ecef,stroke:#6c757d,stroke-width:2px,stroke-dasharray:3 3,color:#000
 ```
 
 In the POC, everything except the Besu chains runs in a single Spring Boot application. The `marketdlt` module
 lives in the same JVM for convenience, but is treated as an external system: no Pontes module depends on it.
+`trigger` and `rtgs` are simulations of T2; `cashtoken` and `marketdlt` keep their ledgers in H2 unless a Besu
+profile is active.
 
 ```mermaid
 flowchart TB
     client["HTTP client<br/>requests.http, tests"]
     subgraph app["Spring Boot application, port 8080 (modular monolith)"]
         direction LR
-        interop["interop"] --- cashtoken["cashtoken"] --- trigger["trigger"] --- rtgs["rtgs"]
-        marketdlt["marketdlt"]
-        demo["demo"]
+        interop["interop<br/>EII"] --- cashtoken["cashtoken<br/>Eurosystem DLT"] --- trigger["trigger<br/>T2 interface (simulated)"] --- rtgs["rtgs<br/>T2 RTGS + ESMIG (simulated)"]
+        marketdlt["marketdlt<br/>market DLT platforms"]
+        demo["demo<br/>demo data"]
         h2[("H2 in memory")]
     end
     besu["besu :8545<br/>Eurosystem DLT, chainId 1337<br/>EuroCashToken behind a UUPS proxy"]
     ma["besu-market-a :8546<br/>MDLT-A, chainId 1338<br/>IdentityRegistry, SecurityToken, HashLinkRegistry"]
     mb["besu-market-b :8547<br/>MDLT-B, chainId 1339<br/>same contracts"]
+    subgraph legend["Legend"]
+        direction TB
+        l1["Implemented"]:::implemented
+        l2["Simulated by default,<br/>real Besu chain with a profile"]:::switchable
+        l3["Simulated"]:::simulated
+    end
 
     client -->|"REST"| app
     cashtoken -->|"web3j, profile besu"| besu
     marketdlt -->|"web3j, profile market-besu"| ma
     marketdlt -->|"web3j, profile market-besu"| mb
+
+    class interop,besu,ma,mb implemented
+    class cashtoken,marketdlt switchable
+    class trigger,rtgs simulated
+    classDef implemented fill:#d4edda,stroke:#2e7d32,stroke-width:2px,color:#000
+    classDef switchable fill:#fff3cd,stroke:#b8860b,stroke-width:2px,stroke-dasharray:6 3,color:#000
+    classDef simulated fill:#e9ecef,stroke:#6c757d,stroke-width:2px,stroke-dasharray:3 3,color:#000
 ```
 
 | Component | Default mode | Besu mode | Limits |
